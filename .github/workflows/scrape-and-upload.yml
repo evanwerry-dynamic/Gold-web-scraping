@@ -1,0 +1,95 @@
+name: Scrape Gold & Upload to Foundry
+
+on:
+  schedule:
+    # Run daily at 5 PM UTC
+    - cron: '0 17 * * *'
+  workflow_dispatch:
+
+jobs:
+  scrape-and-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Scrape latest gold price
+        id: scrape
+        run: |
+          python - <<'EOF'
+          from scraper.scraper import scrape_latest_from_historical
+          import json
+          
+          data = scrape_latest_from_historical()
+          if data:
+              print(f"PRICE_DATA={json.dumps(data)}")
+              with open("price.json", "w") as f:
+                  json.dump(data, f)
+              print("✓ Scraped gold price successfully")
+          else:
+              print("✗ Failed to scrape price")
+              exit(1)
+          EOF
+
+      - name: Upload to Foundry
+        if: success()
+        env:
+          FOUNDRY_URL: ${{ secrets.FOUNDRY_URL }}
+          FOUNDRY_TOKEN: ${{ secrets.FOUNDRY_TOKEN }}
+          FOUNDRY_DATASET: ${{ secrets.FOUNDRY_DATASET }}
+        run: |
+          python - <<'EOF'
+          import json
+          import os
+          from scraper.foundry import upload_latest_price
+          
+          foundry_url = os.getenv("FOUNDRY_URL")
+          foundry_token = os.getenv("FOUNDRY_TOKEN")
+          dataset_id = os.getenv("FOUNDRY_DATASET")
+          
+          if not all([foundry_url, foundry_token, dataset_id]):
+              print("✗ Missing Foundry secrets (FOUNDRY_URL, FOUNDRY_TOKEN, FOUNDRY_DATASET)")
+              exit(1)
+          
+          with open("price.json", "r") as f:
+              price_data = json.load(f)
+          
+          success = upload_latest_price(foundry_url, foundry_token, dataset_id, price_data)
+          if success:
+              print("✓ Successfully uploaded to Foundry")
+          else:
+              print("✗ Failed to upload to Foundry")
+              exit(1)
+          EOF
+
+      - name: Store price locally
+        if: always()
+        run: |
+          python - <<'EOF'
+          import json
+          from scraper.data import append_price
+          
+          with open("price.json", "r") as f:
+              price_data = json.load(f)
+          
+          record = append_price(price_data)
+          print(f"✓ Stored locally: {record}")
+          EOF
+
+      - name: Commit data changes
+        if: always()
+        uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_message: "chore: add scraped gold price data"
+          file_pattern: "data/*.json"

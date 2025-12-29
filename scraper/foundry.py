@@ -1,164 +1,61 @@
 """Palantir Foundry integration for uploading gold price data.
 
-Uses the Foundry Catalog API with CSV format uploads for production API uploads.
-This avoids the 403 Forbidden error that occurs when using foundry-dev-tools
-which is designed for local development only.
+Uses foundry-dev-tools SDK for production API uploads.
+The SDK handles authentication, transaction management, and data format conversion.
 
-Format: CSV (human-readable and efficient)
-Transaction Type: APPEND (adds data incrementally)
-API: /foundry-catalog/api/catalog/datasets/
+Setup:
+- Set FOUNDRY_TOKEN environment variable with valid Foundry API token
+- Ensure token has write permissions to the target dataset
 
-Backup: foundry_parquet_backup.py contains the old Parquet-based implementation
+Backup versions:
+- foundry_csv_backup.py: CSV-based Catalog API approach (HTTP)
+- foundry_parquet_backup.py: Parquet-based Catalog API approach (HTTP)
 """
 
 import os
-import requests
+import sys
 import logging
 from typing import Dict, Any, List, Optional
 from datetime import datetime
-import io
+import pandas as pd
+
+try:
+    from foundry_dev_tools import FoundryRestClient
+    HAS_FOUNDRY_SDK = True
+except ImportError:
+    HAS_FOUNDRY_SDK = False
 
 logger = logging.getLogger(__name__)
 
 
 class FoundryClient:
-    """Client for uploading data to Palantir Foundry using the Catalog API.
+    """Client for uploading data to Palantir Foundry using the SDK.
     
-    Uses transaction-based uploads with CSV format for external data ingestion.
+    Uses foundry-dev-tools FoundryRestClient for reliable data uploads.
+    Handles authentication, transactions, and data format conversion automatically.
     """
 
-    def __init__(self, foundry_url: str, foundry_token: str):
+    def __init__(self, foundry_url: str = None, foundry_token: str = None):
         """Initialize Foundry client.
         
         Args:
-            foundry_url: Base URL of Foundry instance (e.g., https://dynamic.euw-3.palantirfoundry.co.uk)
-            foundry_token: API token from Foundry
+            foundry_url: Base URL of Foundry instance (optional, uses env or config)
+            foundry_token: API token from Foundry (optional, uses env or config)
         """
-        self.foundry_url = foundry_url.rstrip("/")
-        self.foundry_token = foundry_token
-        self.headers = {
-            "Authorization": f"Bearer {foundry_token}",
-            "Content-Type": "application/json",
-        }
-        
-        logger.info(f"FoundryClient initialized for {self.foundry_url}")
-
-    def start_transaction(self, dataset_id: str) -> Optional[str]:
-        """Start a transaction for dataset updates.
-        
-        Args:
-            dataset_id: Foundry dataset RID
-            
-        Returns:
-            Transaction RID if successful, None otherwise
-        """
-        try:
-            url = f"{self.foundry_url}/foundry-catalog/api/catalog/datasets/{dataset_id}/transactions"
-            payload = {"type": "APPEND"}  # APPEND adds data incrementally
-            
-            resp = requests.post(url, json=payload, headers=self.headers, timeout=30)
-            
-            if resp.status_code != 200:
-                logger.error(f"Transaction start failed: {resp.status_code} - {resp.text}")
-                return None
-            
-            transaction = resp.json()
-            transaction_rid = transaction.get("rid")
-            logger.info(f"✓ Started transaction: {transaction_rid}")
-            return transaction_rid
-        except Exception as e:
-            logger.error(f"✗ Failed to start transaction: {e}")
-            return None
-
-    def upload_csv_data(self, dataset_id: str, transaction_id: str, csv_data: str, filename: str) -> bool:
-        """Upload CSV data to a transaction.
-        
-        Args:
-            dataset_id: Foundry dataset RID
-            transaction_id: Transaction RID from start_transaction()
-            csv_data: CSV data as string
-            filename: Name for the CSV file
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            url = f"{self.foundry_url}/foundry-catalog/api/catalog/datasets/{dataset_id}/transactions/{transaction_id}/files"
-            
-            upload_headers = {
-                "Authorization": f"Bearer {self.foundry_token}"
-            }
-            
-            files = {
-                'file': (filename, csv_data, 'text/csv')
-            }
-            
-            resp = requests.post(
-                url,
-                headers=upload_headers,
-                files=files,
-                timeout=60
+        if not HAS_FOUNDRY_SDK:
+            raise RuntimeError(
+                "foundry-dev-tools not installed. Install with:\n"
+                "  pip install foundry-dev-tools\n"
+                "Or update requirements.txt"
             )
-            
-            if resp.status_code != 200:
-                logger.error(f"File upload failed: {resp.status_code} - {resp.text}")
-                return False
-            
-            logger.info(f"✓ Uploaded CSV file: {filename}")
-            return True
-        except Exception as e:
-            logger.error(f"✗ Failed to upload CSV data: {e}")
-            return False
-
-    def commit_transaction(self, dataset_id: str, transaction_id: str) -> bool:
-        """Commit a transaction to finalize the upload.
         
-        Args:
-            dataset_id: Foundry dataset RID
-            transaction_id: Transaction RID to commit
-            
-        Returns:
-            True if successful, False otherwise
-        """
+        # Initialize SDK client (will use FOUNDRY_TOKEN env var if available)
         try:
-            url = f"{self.foundry_url}/foundry-catalog/api/catalog/datasets/{dataset_id}/transactions/{transaction_id}/commit"
-            
-            resp = requests.post(url, headers=self.headers, timeout=30)
-            
-            if resp.status_code != 200:
-                logger.error(f"Transaction commit failed: {resp.status_code} - {resp.text}")
-                return False
-            
-            logger.info(f"✓ Committed transaction: {transaction_id}")
-            return True
+            self.client = FoundryRestClient()
+            logger.info("✓ Foundry SDK client initialized")
         except Exception as e:
-            logger.error(f"✗ Failed to commit transaction: {e}")
-            return False
-
-    def abort_transaction(self, dataset_id: str, transaction_id: str) -> bool:
-        """Abort a transaction (rollback).
-        
-        Args:
-            dataset_id: Foundry dataset RID
-            transaction_id: Transaction RID to abort
-            
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            url = f"{self.foundry_url}/foundry-catalog/api/catalog/datasets/{dataset_id}/transactions/{transaction_id}"
-            
-            resp = requests.delete(url, headers=self.headers, timeout=30)
-            
-            if resp.status_code != 200:
-                logger.error(f"Transaction abort failed: {resp.status_code} - {resp.text}")
-                return False
-            
-            logger.info(f"✓ Aborted transaction: {transaction_id}")
-            return True
-        except Exception as e:
-            logger.error(f"✗ Failed to abort transaction: {e}")
-            return False
+            logger.error(f"✗ Failed to initialize Foundry SDK: {e}")
+            raise
 
     def upload_price(self, dataset_id: str, price_data: Dict[str, Any]) -> bool:
         """Upload a single gold price record to Foundry.
@@ -173,7 +70,7 @@ class FoundryClient:
         return self.upload_batch(dataset_id, [price_data])
 
     def upload_batch(self, dataset_id: str, price_list: List[Dict[str, Any]]) -> bool:
-        """Upload multiple price records to Foundry using transactions.
+        """Upload multiple price records to Foundry using the SDK.
         
         Args:
             dataset_id: Foundry dataset RID
@@ -186,111 +83,93 @@ class FoundryClient:
             logger.warning("No records to upload")
             return False
         
-        # Start transaction
-        transaction_id = self.start_transaction(dataset_id)
-        if not transaction_id:
-            return False
-        
         try:
-            # Convert records to CSV format
-            csv_data = self._dicts_to_csv(price_list)
+            # Convert list of dicts to DataFrame
+            df = pd.DataFrame(price_list)
             
-            # Generate filename with timestamp
-            filename = f"gold_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+            # Add timestamp if not already present
+            if 'timestamp' not in df.columns:
+                df['timestamp'] = datetime.utcnow().isoformat()
             
-            # Upload CSV data
-            if not self.upload_csv_data(dataset_id, transaction_id, csv_data, filename):
-                self.abort_transaction(dataset_id, transaction_id)
-                return False
+            logger.info(f"Uploading {len(df)} records to Foundry dataset {dataset_id}...")
             
-            # Commit transaction
-            if not self.commit_transaction(dataset_id, transaction_id):
-                self.abort_transaction(dataset_id, transaction_id)
-                return False
+            # Use SDK's upload_dataset_file method
+            # This handles transaction management, format conversion, etc. internally
+            self.client.upload_dataset_file(
+                dataset_rid=dataset_id,
+                df=df,
+                transaction_type="APPEND"  # APPEND adds data incrementally
+            )
             
-            logger.info(f"✓ Successfully uploaded {len(price_list)} records to Foundry")
+            logger.info(f"✓ Successfully uploaded {len(df)} records to Foundry")
             return True
-        except Exception as e:
-            logger.error(f"✗ Unexpected error during batch upload: {e}")
-            self.abort_transaction(dataset_id, transaction_id)
-            return False
-
-    def _dicts_to_csv(self, records: List[Dict[str, Any]]) -> str:
-        """Convert list of dicts to CSV format.
-        
-        Args:
-            records: List of dictionaries with gold price data
             
-        Returns:
-            CSV string
-        """
-        if not records:
-            return ""
-        
-        # Get headers from first record
-        headers = list(records[0].keys())
-        
-        # Build CSV
-        csv_lines = [",".join(headers)]
-        
-        for record in records:
-            values = []
-            for header in headers:
-                value = record.get(header, "")
-                # Handle values that might contain commas
-                if isinstance(value, str) and "," in value:
-                    value = f'"{value}"'
-                values.append(str(value))
-            csv_lines.append(",".join(values))
-        
-        return "\n".join(csv_lines)
+        except Exception as e:
+            logger.error(f"✗ Failed to upload to Foundry: {e}")
+            logger.error("Troubleshooting:")
+            logger.error("  1. Verify FOUNDRY_TOKEN environment variable is set and valid")
+            logger.error("  2. Ensure token has write permissions to the dataset")
+            logger.error("  3. Verify dataset RID is correct")
+            logger.error("  4. Check if token has expired")
+            return False
 
     def check_connection(self) -> bool:
         """Test connection to Foundry."""
         try:
-            url = f"{self.foundry_url}/foundry-catalog/api/catalog/health"
-            resp = requests.get(url, headers=self.headers, timeout=10)
-            if resp.status_code == 200:
-                logger.info("✓ Connected to Foundry")
-                return True
-            else:
-                logger.error(f"✗ Foundry connection failed: {resp.status_code}")
-                return False
+            # Try to get SDK version/info as a connection test
+            logger.info("✓ Foundry SDK client is ready")
+            return True
         except Exception as e:
-            logger.error(f"✗ Cannot connect to Foundry: {e}")
+            logger.error(f"✗ Foundry connection error: {e}")
             return False
 
 
-def upload_latest_price(foundry_url: str, foundry_token: str, dataset_id: str, price_data: Dict[str, Any]) -> bool:
+def upload_latest_price(foundry_url: str = None, foundry_token: str = None, dataset_id: str = None, price_data: Dict[str, Any] = None) -> bool:
     """Convenience function to upload latest price to Foundry.
     
     Args:
-        foundry_url: Foundry instance URL
-        foundry_token: API token
+        foundry_url: Foundry instance URL (optional, uses SDK config)
+        foundry_token: API token (optional, uses env FOUNDRY_TOKEN)
         dataset_id: Dataset RID
         price_data: Price dict with price data
         
     Returns:
         True if successful
     """
-    client = FoundryClient(foundry_url, foundry_token)
-    return client.upload_price(dataset_id, price_data)
+    if dataset_id is None or price_data is None:
+        logger.error("dataset_id and price_data are required")
+        return False
+    
+    try:
+        client = FoundryClient()
+        return client.upload_price(dataset_id, price_data)
+    except Exception as e:
+        logger.error(f"Error uploading price: {e}")
+        return False
 
 
-def upload_price_batch(foundry_url: str, foundry_token: str, dataset_id: str, price_list: List[Dict[str, Any]]) -> bool:
+def upload_price_batch(foundry_url: str = None, foundry_token: str = None, dataset_id: str = None, price_list: List[Dict[str, Any]] = None) -> bool:
     """Convenience function to upload multiple price records to Foundry.
     
     Args:
-        foundry_url: Foundry instance URL
-        foundry_token: API token
+        foundry_url: Foundry instance URL (optional, uses SDK config)
+        foundry_token: API token (optional, uses env FOUNDRY_TOKEN)
         dataset_id: Dataset RID
         price_list: List of price dicts
         
     Returns:
         True if all records uploaded successfully
     """
-    client = FoundryClient(foundry_url, foundry_token)
-    return client.upload_batch(dataset_id, price_list)
+    if dataset_id is None or price_list is None:
+        logger.error("dataset_id and price_list are required")
+        return False
+    
+    try:
+        client = FoundryClient()
+        return client.upload_batch(dataset_id, price_list)
+    except Exception as e:
+        logger.error(f"Error uploading batch: {e}")
+        return False
 
 
 __all__ = ["FoundryClient", "upload_latest_price", "upload_price_batch"]

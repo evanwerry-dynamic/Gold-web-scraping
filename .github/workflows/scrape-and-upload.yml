@@ -45,7 +45,6 @@ jobs:
       - name: Upload to Foundry
         if: success()
         env:
-          FOUNDRY_URL: ${{ secrets.FOUNDRY_URL }}
           FOUNDRY_TOKEN: ${{ secrets.FOUNDRY_TOKEN }}
           FOUNDRY_DATASET: ${{ secrets.FOUNDRY_DATASET }}
         run: |
@@ -54,22 +53,25 @@ jobs:
           import os
           from scraper.foundry import upload_latest_price
           
-          foundry_url = os.getenv("FOUNDRY_URL")
           foundry_token = os.getenv("FOUNDRY_TOKEN")
           dataset_id = os.getenv("FOUNDRY_DATASET")
           
-          if not all([foundry_url, foundry_token, dataset_id]):
-              print("✗ Missing Foundry secrets (FOUNDRY_URL, FOUNDRY_TOKEN, FOUNDRY_DATASET)")
+          if not all([foundry_token, dataset_id]):
+              print("✗ Missing Foundry secrets (FOUNDRY_TOKEN, FOUNDRY_DATASET)")
               exit(1)
           
           with open("price.json", "r") as f:
               price_data = json.load(f)
           
-          success = upload_latest_price(foundry_url, foundry_token, dataset_id, price_data)
-          if success:
-              print("✓ Successfully uploaded to Foundry")
-          else:
-              print("✗ Failed to upload to Foundry")
+          try:
+              success = upload_latest_price(dataset_id=dataset_id, price_data=price_data)
+              if success:
+                  print("✓ Successfully uploaded to Foundry")
+              else:
+                  print("✗ Failed to upload to Foundry")
+                  exit(1)
+          except Exception as e:
+              print(f"✗ Error uploading to Foundry: {e}")
               exit(1)
           EOF
 

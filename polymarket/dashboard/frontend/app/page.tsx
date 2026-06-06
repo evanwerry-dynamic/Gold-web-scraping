@@ -48,7 +48,7 @@ export default function Dashboard() {
         }}
       >
         {/* Row 1, Col 1: Open positions */}
-        <div style={{ background: "#050505", overflow: "hidden" }}>
+        <div style={{ background: "#050505", overflow: "hidden", gridColumn: 1, gridRow: 1 }}>
           <PositionsPanel />
         </div>
 
@@ -56,6 +56,7 @@ export default function Dashboard() {
         <div
           style={{
             background: "#050505",
+            gridColumn: 2,
             gridRow: "1 / 3",
             overflow: "hidden",
           }}
@@ -64,17 +65,17 @@ export default function Dashboard() {
         </div>
 
         {/* Row 1, Col 3: Orderbook */}
-        <div style={{ background: "#050505", overflow: "hidden" }}>
+        <div style={{ background: "#050505", overflow: "hidden", gridColumn: 3, gridRow: 1 }}>
           <OrderbookDepth />
         </div>
 
         {/* Row 2, Col 1: Trade feed */}
-        <div style={{ background: "#050505", overflow: "hidden" }}>
+        <div style={{ background: "#050505", overflow: "hidden", gridColumn: 1, gridRow: 2 }}>
           <TradeFeed />
         </div>
 
         {/* Row 2, Col 3: BTC price sparkline */}
-        <div style={{ background: "#050505", overflow: "hidden" }}>
+        <div style={{ background: "#050505", overflow: "hidden", gridColumn: 3, gridRow: 2 }}>
           <PriceSparkline />
         </div>
 
@@ -83,6 +84,7 @@ export default function Dashboard() {
           style={{
             background: "#050505",
             gridColumn: "1 / 3",
+            gridRow: 3,
             overflow: "hidden",
           }}
         >
@@ -90,7 +92,7 @@ export default function Dashboard() {
         </div>
 
         {/* Row 3, Col 3: System health */}
-        <div style={{ background: "#050505", overflow: "hidden" }}>
+        <div style={{ background: "#050505", overflow: "hidden", gridColumn: 3, gridRow: 3 }}>
           <SystemHealth />
         </div>
       </div>

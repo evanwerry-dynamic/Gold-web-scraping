@@ -6,7 +6,7 @@ python-dotenv>=1.0
 pandas>=1.0
 
 # Mad Scientist — Polymarket bot
-polymarket-apis==2.2.0
+py_clob_client_v2==1.0.1
 scipy>=1.10.0
 numpy>=1.24.0
 websockets>=12.0

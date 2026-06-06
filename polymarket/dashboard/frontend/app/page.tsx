@@ -1,4 +1,5 @@
 import { WsInit } from "@/components/WsInit";
+import { DemoDataInjector } from "@/components/DemoDataInjector";
 import { PnLHeader } from "@/components/PnLHeader";
 import { StrategyStatusBar } from "@/components/StrategyStatusBar";
 import { PositionsPanel } from "@/components/PositionsPanel";
@@ -25,6 +26,8 @@ export default function Dashboard() {
     >
       {/* WebSocket connection (invisible) */}
       <WsInit />
+      {/* Demo data when no real bot is connected */}
+      <DemoDataInjector />
 
       {/* Top bar: P&L + strategy pipeline */}
       <PnLHeader />

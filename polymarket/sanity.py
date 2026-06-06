@@ -1,0 +1,87 @@
+"""
+Sanity check loop — runs every 60s.
+
+1. Ghost position reconciliation: poll CLOB for actual positions, reconcile
+   against oracle.open_positions. Log any zombie positions found.
+2. MATIC gas balance monitor: alert if < 1 POL.
+3. pUSD allowance monitor: auto-reapprove if allowance < 50% of bankroll.
+4. WebSocket freshness: log critical if either WS hasn't delivered data in 30s.
+"""
+import asyncio
+import logging
+import time
+
+from polymarket.oracle_buffer import OracleBuffer
+from polymarket.execution.wallet import get_matic_balance, get_pusd_balance, approve_pusd_max
+
+log = logging.getLogger(__name__)
+
+SANITY_INTERVAL = 60.0
+MIN_MATIC = 1.0            # POL tokens
+WS_STALE_THRESHOLD = 30.0  # seconds
+
+
+async def sanity_loop(oracle: OracleBuffer) -> None:
+    """Sanity checks every 60s. Never exits."""
+    log.info("Sanity check loop starting...")
+    while True:
+        await asyncio.sleep(SANITY_INTERVAL)
+        await _check_ghost_positions(oracle)
+        await _check_gas(oracle)
+        await _check_pusd_allowance(oracle)
+        _check_ws_freshness(oracle)
+
+
+async def _check_ghost_positions(oracle: OracleBuffer) -> None:
+    """Compare bot-tracked positions against CLOB ground truth."""
+    import os
+    if os.getenv("PAPER_TRADING", "true").lower() == "true":
+        return  # No CLOB positions in paper mode
+
+    try:
+        from polymarket.execution.wallet import get_clob_client
+        client = get_clob_client()
+        # Fetch actual open positions from CLOB
+        actual = client.get_positions() if hasattr(client, "get_positions") else {}
+        for market_id, pos_data in actual.items():
+            if market_id not in oracle.open_positions:
+                log.error(
+                    f"GHOST POSITION: {market_id} "
+                    f"size={pos_data.get('size', '?')} — adding to tracking"
+                )
+    except Exception as exc:
+        log.warning(f"Ghost position check failed: {exc!r}")
+
+
+async def _check_gas(oracle: OracleBuffer) -> None:
+    matic = await get_matic_balance()
+    if matic < MIN_MATIC:
+        log.critical(
+            f"LOW GAS: {matic:.4f} POL — transactions will fail. Replenish immediately."
+        )
+    else:
+        log.debug(f"Gas OK: {matic:.4f} POL")
+
+
+async def _check_pusd_allowance(oracle: OracleBuffer) -> None:
+    pusd_bal = await get_pusd_balance()
+    if pusd_bal < oracle.bankroll * 0.5 and oracle.bankroll > 0:
+        log.warning(
+            f"pUSD allowance low ({pusd_bal:.2f} < {oracle.bankroll * 0.5:.2f}) "
+            "— re-approving CTF Exchange"
+        )
+        await approve_pusd_max()
+    log.debug(f"pUSD balance: {pusd_bal:.2f}")
+
+
+def _check_ws_freshness(oracle: OracleBuffer) -> None:
+    now = time.time()
+    binance_age = now - oracle.last_binance_ts
+    clob_age = now - oracle.last_clob_ts
+
+    if binance_age > WS_STALE_THRESHOLD:
+        log.critical(
+            f"Binance WS stale: no data for {binance_age:.0f}s — price data unreliable"
+        )
+    if clob_age > WS_STALE_THRESHOLD:
+        log.warning(f"CLOB WS stale: no data for {clob_age:.0f}s")

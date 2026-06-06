@@ -1,7 +1,36 @@
+# Python
 __pycache__/
+*.py[cod]
+*.pyo
 .venv/
+venv/
 env/
-*.pyc
-.DS_Store
+*.egg-info/
+dist/
+build/
+
+# Environment — NEVER commit private keys or API keys
 .env
+.env.local
+.env.*.local
+
+# Bot state / data
 data/
+polymarket/state/
+
+# Next.js / Node
+polymarket/dashboard/frontend/.next/
+polymarket/dashboard/frontend/node_modules/
+polymarket/dashboard/frontend/out/
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

@@ -1,0 +1,42 @@
+@import "tailwindcss";
+
+:root {
+  --green: #00ff88;
+  --red: #ff4466;
+  --dim: #555;
+  --panel-bg: #0d0d0d;
+  --panel-border: #1e1e1e;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: #050505;
+  color: #00ff88;
+  font-family: "JetBrains Mono", "Fira Code", "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  overflow: hidden;
+  height: 100vh;
+}
+
+.scroll-panel {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #333 transparent;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+.live-dot { animation: blink 1.5s ease-in-out infinite; }
+
+@keyframes flash-green { from { color: #00ff88; } to { color: inherit; } }
+@keyframes flash-red   { from { color: #ff4466; } to { color: inherit; } }
+.flash-green { animation: flash-green 0.4s ease-out; }
+.flash-red   { animation: flash-red   0.4s ease-out; }

@@ -1,0 +1,123 @@
+"""
+Claude nightly recalibration.
+
+Runs every 24h (at midnight UTC). Analyzes the day's trade log,
+detects model drift, and outputs updated strategy parameters.
+
+Only fires Claude API if win_rate < 65% or edge drift < -0.02.
+Cost: ~$0.02 per call. Essentially free.
+"""
+import asyncio
+import json
+import logging
+import os
+import numpy as np
+
+from polymarket.data import load_trade_history
+from polymarket.data import save_state, load_state
+
+log = logging.getLogger(__name__)
+
+CALIBRATION_INTERVAL = 86400.0  # 24 hours
+MIN_TRADES_FOR_CALIBRATION = 20
+
+
+async def calibrator_loop() -> None:
+    """Nightly recalibration via Claude. Never exits."""
+    log.info("Calibrator loop starting (runs every 24h)...")
+    while True:
+        await asyncio.sleep(CALIBRATION_INTERVAL)
+        await run_calibration()
+
+
+async def run_calibration() -> None:
+    """Analyze today's trades and adjust strategy params if model is drifting."""
+    trades = load_trade_history(days=1)
+    closed = [t for t in trades if "pnl" in t]
+
+    if len(closed) < MIN_TRADES_FOR_CALIBRATION:
+        log.info(f"Calibration skipped: only {len(closed)} closed trades today")
+        return
+
+    win_rate = sum(1 for t in closed if t.get("pnl", 0) > 0) / len(closed)
+    edges = [t.get("edge", 0) for t in closed]
+    pnls = [t.get("pnl", 0) / t.get("dollar_size", 1) for t in closed if t.get("dollar_size")]
+    avg_predicted = float(np.mean(edges)) if edges else 0.0
+    avg_realized = float(np.mean(pnls)) if pnls else 0.0
+    drift = avg_realized - avg_predicted
+
+    log.info(
+        f"Calibration check: {len(closed)} trades, "
+        f"win={win_rate:.1%}, drift={drift:+.4f}"
+    )
+
+    # Only call Claude if performance has degraded
+    if win_rate >= 0.65 and drift >= -0.02:
+        log.info("Model performing well — no recalibration needed")
+        return
+
+    log.warning(f"Model drift detected (win={win_rate:.1%}, drift={drift:+.4f}) — calling Claude")
+    await _call_claude(closed, win_rate, avg_predicted, avg_realized, drift)
+
+
+async def _call_claude(
+    trades: list,
+    win_rate: float,
+    avg_predicted: float,
+    avg_realized: float,
+    drift: float,
+) -> None:
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        log.warning("ANTHROPIC_API_KEY not set — skipping Claude recalibration")
+        return
+
+    current_params = load_state().get("strategy_params", {
+        "min_delta_threshold": 0.001,
+        "min_edge_net": 0.05,
+        "entry_seconds_before_close": 10,
+    })
+
+    worst_5 = sorted(trades, key=lambda t: t.get("pnl", 0))[:5]
+
+    prompt = f"""Mad Scientist Polymarket bot — nightly calibration.
+
+Today's performance ({len(trades)} trades):
+- Win rate: {win_rate:.1%} (target: >70%)
+- Average predicted edge: {avg_predicted:.4f}
+- Average realized edge: {avg_realized:.4f}
+- Drift (realized - predicted): {drift:+.4f}
+
+Worst 5 trades:
+{json.dumps(worst_5, indent=2, default=str)}
+
+Current strategy parameters:
+{json.dumps(current_params, indent=2)}
+
+Task: Is the model systematically over or underestimating edge?
+Respond with ONLY a valid Python dict (no explanation) with updated parameters.
+Adjust ONLY if win_rate < 65% or drift < -0.02.
+Valid keys: min_delta_threshold, min_edge_net, entry_seconds_before_close
+Example: {{"min_delta_threshold": 0.0012, "min_edge_net": 0.06, "entry_seconds_before_close": 8}}"""
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=api_key)
+        resp = client.messages.create(
+            model="claude-opus-4-8",
+            max_tokens=300,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = resp.content[0].text.strip()
+        # Safe parse — only allow dict literals
+        import ast
+        new_params = ast.literal_eval(raw)
+        if isinstance(new_params, dict):
+            state = load_state()
+            state["strategy_params"] = new_params
+            save_state(state)
+            log.info(f"Claude recalibration applied: {new_params}")
+        else:
+            log.warning(f"Claude returned unexpected format: {raw!r}")
+    except Exception as exc:
+        log.error(f"Claude calibration call failed: {exc!r}")

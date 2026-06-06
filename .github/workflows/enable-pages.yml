@@ -1,32 +1,38 @@
-name: Deploy Dashboard to GitHub Pages
+name: Enable GitHub Pages (branch deploy)
 on:
   workflow_dispatch:
 
 permissions:
-  contents: read
   pages: write
-  id-token: write
+  contents: read
 
 jobs:
-  deploy:
+  enable:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Checkout gh-pages branch
-        uses: actions/checkout@v4
-        with:
-          ref: gh-pages
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: '.'
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Enable Pages from gh-pages branch
+        run: |
+          HTTP=$(curl -s -o /tmp/pages_resp.json -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/pages" \
+            -d '{"build_type":"legacy","source":{"branch":"gh-pages","path":"/"}}')
+          cat /tmp/pages_resp.json
+          echo "HTTP: $HTTP"
+          # 201 = created, 409 = already exists (both OK)
+          if [[ "$HTTP" == "201" || "$HTTP" == "409" ]]; then
+            echo "Pages enabled successfully (or was already on)"
+          else
+            # Try PATCH in case it already exists with wrong source
+            HTTP2=$(curl -s -o /tmp/pages_patch.json -w "%{http_code}" \
+              -X PUT \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/pages" \
+              -d '{"source":{"branch":"gh-pages","path":"/"}}')
+            cat /tmp/pages_patch.json
+            echo "PATCH HTTP: $HTTP2"
+          fi

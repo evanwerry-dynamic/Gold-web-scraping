@@ -11,8 +11,10 @@ Run standalone:
 
 Or launch via run_mad_scientist.py which starts bot + dashboard together.
 """
+import asyncio
 import json
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -60,7 +62,20 @@ manager = ConnectionManager()
 async def lifespan(app: FastAPI):
     set_connection_manager(manager)
     log.info("Dashboard WebSocket server ready")
+
+    bot_task = None
+    if os.getenv("POLYGON_PRIVATE_KEY"):
+        try:
+            from polymarket.main import run
+            bot_task = asyncio.create_task(run())
+            log.info("Bot started as background task")
+        except Exception as exc:
+            log.error(f"Bot failed to start: {exc!r}")
+
     yield
+
+    if bot_task and not bot_task.done():
+        bot_task.cancel()
     log.info("Dashboard shutting down")
 
 

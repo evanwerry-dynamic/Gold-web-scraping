@@ -134,17 +134,49 @@ async def _paper_fill(
 
 
 async def _submit_to_clob(intent: dict, order_id: str) -> dict:
-    """Submit order to Polymarket CLOB API. Returns order response."""
-    # Import here to avoid loading web3/keys when paper trading
+    """Submit order to Polymarket CLOB API. Returns order response dict."""
     from polymarket.execution.wallet import get_clob_client
 
     client = get_clob_client()
-    # Build and sign order using polymarket-apis client
-    # Actual implementation depends on polymarket-apis package API
-    raise NotImplementedError(
-        "Live CLOB submission requires wallet setup. "
-        "Run with PAPER_TRADING=true first."
-    )
+    loop = asyncio.get_event_loop()
+    order_type_str = intent.get("order_type", "GTC")
+    token_id = intent["token_id"]
+
+    try:
+        from py_clob_client_v2.clob_types import (
+            MarketOrderArgs,
+            LimitOrderArgs,
+            OrderType,
+        )
+
+        if order_type_str == "FOK":
+            args = MarketOrderArgs(
+                token_id=token_id,
+                amount=intent["dollar_size"],
+            )
+            signed = await loop.run_in_executor(
+                None, client.create_market_order, args
+            )
+            otype = OrderType.FOK
+        else:
+            args = LimitOrderArgs(
+                price=intent["price"],
+                size=intent.get("shares", intent["dollar_size"] / max(intent["price"], 0.001)),
+                token_id=token_id,
+            )
+            signed = await loop.run_in_executor(None, client.create_order, args)
+            otype = OrderType.POST_ONLY if order_type_str == "POST_ONLY" else OrderType.GTC
+
+        resp = await loop.run_in_executor(
+            None, lambda: client.post_order(signed, otype)
+        )
+        return resp or {"orderID": order_id, "status": "submitted"}
+
+    except (ImportError, AttributeError):
+        raise RuntimeError(
+            "py_clob_client_v2 CLOB types not found — "
+            "check py_clob_client_v2 installation."
+        )
 
 
 async def _track_until_terminal(
@@ -153,8 +185,72 @@ async def _track_until_terminal(
     oracle: OracleBuffer,
     risk_mgr: RiskManager,
 ) -> None:
-    """Poll order status until it reaches a terminal state."""
-    log.debug(f"[OMS] Tracking order {resp.get('id')}")
+    """Poll order status until filled, cancelled, or timed out."""
+    from polymarket.execution.wallet import get_clob_client
+    from polymarket.data import append_trade
+
+    # polymarket API may return orderID or id depending on version
+    tracked_id = resp.get("orderID") or resp.get("id") or "unknown"
+    client = get_clob_client()
+    loop = asyncio.get_event_loop()
+    timeout = FOK_TIMEOUT if intent.get("order_type") == "FOK" else GTC_TIMEOUT
+    deadline = time.time() + timeout
+
+    while time.time() < deadline:
+        await asyncio.sleep(FILL_POLL_INTERVAL)
+        try:
+            order = await loop.run_in_executor(None, client.get_order, tracked_id)
+            status = (order.get("status") or "").lower()
+
+            if status in ("matched", "filled"):
+                fill_price = float(order.get("avgPrice") or intent["price"])
+                shares = float(order.get("sizeMatched") or order.get("size") or intent.get("shares", 0))
+                dollar_size = shares * fill_price
+
+                pos = OpenPosition(
+                    market_id=intent["market_id"],
+                    condition_id=intent["condition_id"],
+                    token_id=intent["token_id"],
+                    side=intent.get("side", "YES"),
+                    shares=shares,
+                    cost_basis=dollar_size,
+                )
+                oracle.open_positions[tracked_id] = pos
+                oracle.bankroll -= dollar_size
+
+                append_trade({
+                    "order_id": tracked_id,
+                    "strategy": intent.get("strategy"),
+                    "market_id": intent.get("market_id"),
+                    "side": intent.get("side"),
+                    "fair_value": intent.get("fair"),
+                    "entry_price": fill_price,
+                    "edge": intent.get("edge"),
+                    "shares": shares,
+                    "dollar_size": dollar_size,
+                    "paper": False,
+                })
+                log.info(
+                    f"[OMS/live] Filled: {tracked_id} "
+                    f"{shares:.2f}sh @ {fill_price:.3f}"
+                )
+                oracle.strategy_phase = "HOLD"
+                return
+
+            if status in ("cancelled", "rejected"):
+                log.info(f"[OMS/live] Order {status}: {tracked_id}")
+                oracle.strategy_phase = "HOLD"
+                return
+
+        except Exception as exc:
+            log.warning(f"[OMS/live] Poll error for {tracked_id}: {exc!r}")
+
+    # Timed out — attempt cancel
+    log.warning(f"[OMS/live] Order {tracked_id} timed out after {timeout}s — cancelling")
+    try:
+        await loop.run_in_executor(None, client.cancel, tracked_id)
+    except Exception as exc:
+        log.warning(f"[OMS/live] Cancel failed for {tracked_id}: {exc!r}")
     oracle.strategy_phase = "HOLD"
 
 

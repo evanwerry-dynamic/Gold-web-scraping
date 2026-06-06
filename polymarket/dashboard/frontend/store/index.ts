@@ -104,6 +104,7 @@ export const useBookStore = create<{
 
 export const useHealthStore = create<{
   health: Health;
+  btcHistory: { time: number; value: number }[];
   update: (h: Health) => void;
 }>((set) => ({
   health: {
@@ -113,5 +114,16 @@ export const useHealthStore = create<{
     strategy_phase: "SCAN",
     btc_price: 0,
   },
-  update: (h) => set({ health: h }),
+  btcHistory: [],
+  update: (h) =>
+    set((s) => ({
+      health: h,
+      btcHistory:
+        h.btc_price > 0
+          ? [
+              ...s.btcHistory.slice(-300),
+              { time: Math.floor(Date.now() / 1000), value: h.btc_price },
+            ]
+          : s.btcHistory,
+    })),
 }));

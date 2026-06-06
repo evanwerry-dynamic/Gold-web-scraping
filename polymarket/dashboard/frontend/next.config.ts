@@ -4,7 +4,7 @@ const isPages = process.env.PAGES_BUILD === "true";
 
 const nextConfig: NextConfig = {
   output: isPages ? "export" : "standalone",
-  basePath: isPages ? "/Gold-web-scraping" : "",
+  basePath: isPages ? (process.env.PAGES_BASE_PATH ?? "/Gold-web-scraping") : "",
   ...(isPages && { images: { unoptimized: true } }),
 };
 

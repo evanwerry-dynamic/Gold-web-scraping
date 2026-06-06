@@ -8,11 +8,22 @@ import {
   useHealthStore,
 } from "@/store";
 
-const WS_URL =
-  process.env.NEXT_PUBLIC_WS_URL ??
-  (typeof window !== "undefined"
-    ? `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws`
-    : "ws://localhost:8000/ws");
+function resolveWsUrl(): string {
+  if (typeof window === "undefined") return "ws://localhost:8000/ws";
+  const param = new URLSearchParams(window.location.search).get("ws");
+  if (param) {
+    try { localStorage.setItem("wsUrl", param); } catch {}
+    return param;
+  }
+  try {
+    const stored = localStorage.getItem("wsUrl");
+    if (stored) return stored;
+  } catch {}
+  if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
+  return `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws`;
+}
+
+const WS_URL = resolveWsUrl();
 
 let socket: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;

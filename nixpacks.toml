@@ -1,0 +1,5 @@
+[phases.install]
+cmds = ["pip install fastapi 'uvicorn[standard]' pydantic python-dotenv numpy"]
+
+[start]
+cmd = "uvicorn polymarket.dashboard.backend.main:app --host 0.0.0.0 --port $PORT"

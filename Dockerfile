@@ -17,4 +17,4 @@ ENV DASHBOARD_PORT=8000
 
 EXPOSE 8000
 
-CMD ["python", "run_mad_scientist.py", "--paper"]
+CMD ["sh", "-c", "python run_mad_scientist.py --paper --port ${PORT:-8000}"]

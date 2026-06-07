@@ -182,6 +182,30 @@ async def health():
 async def websocket_endpoint(ws: WebSocket):
     await manager.connect(ws)
     try:
+        # Replay recent trade history so the feed populates immediately on connect
+        try:
+            from polymarket.data import load_trade_history
+            recent = load_trade_history(days=1)[-50:]  # Last 50 trades, max 1 day
+            for t in recent:
+                await ws.send_text(json.dumps({
+                    "type": "trade",
+                    "data": {
+                        "id": t.get("order_id", t.get("id", "?")),
+                        "market_id": t.get("market_id", "?"),
+                        "strategy": t.get("strategy", "?"),
+                        "side": t.get("side", "?"),
+                        "entry_price": t.get("entry_price", 0.0),
+                        "fair_value": t.get("fair_value") or t.get("entry_price", 0.0),
+                        "edge": t.get("edge") or 0.0,
+                        "dollar_size": t.get("dollar_size", 0.0),
+                        "pnl": t.get("pnl", None),
+                        "paper": t.get("paper", True),
+                        "timestamp": t.get("timestamp", ""),
+                    }
+                }))
+        except Exception as exc:
+            log.debug(f"Trade history replay failed: {exc!r}")
+
         while True:
             # Send a ping every 15s to keep Railway's proxy from killing idle connections
             try:

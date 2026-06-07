@@ -10,16 +10,26 @@ import {
 
 function resolveWsUrl(): string {
   if (typeof window === "undefined") return "ws://localhost:8000/ws";
+
+  // Explicit one-time override via URL param
   const param = new URLSearchParams(window.location.search).get("ws");
   if (param) {
     try { localStorage.setItem("wsUrl", param); } catch {}
     return param;
   }
+
+  // Production: always use the baked-in env URL — never let a stale localStorage
+  // value (e.g., ws://localhost:8000/ws from a dev session) override it.
+  if (process.env.NEXT_PUBLIC_WS_URL) {
+    try { localStorage.removeItem("wsUrl"); } catch {}   // evict stale entry
+    return process.env.NEXT_PUBLIC_WS_URL;
+  }
+
+  // Development fallback: check localStorage, then current host
   try {
     const stored = localStorage.getItem("wsUrl");
     if (stored) return stored;
   } catch {}
-  if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
   return `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/ws`;
 }
 

@@ -105,7 +105,17 @@ export const useBookStore = create<{
     set((s) => ({
       book: s.book
         ? { ...s.book, seconds_remaining: data.seconds_remaining }
-        : null, // don't initialise with zeros; wait for a real book event
+        : {
+            // Placeholder values (ActiveMarket defaults) — overwritten once
+            // the bridge sends a real book event. Safe because the zeros bug
+            // in clob_ws.py is fixed — 0.82/0.85 won't be overwritten with 0.
+            market_id: data.market_id,
+            yes_bid: 0.820,
+            yes_ask: 0.850,
+            no_bid: 0.820,
+            no_ask: 0.850,
+            seconds_remaining: data.seconds_remaining,
+          },
     })),
 }));
 

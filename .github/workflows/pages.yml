@@ -2,7 +2,7 @@ name: Deploy Dashboard → GitHub Pages
 
 on:
   push:
-    branches: ["claude/twitter-post-feasibility-7gYpb"]
+    branches: ["main", "claude/twitter-post-feasibility-7gYpb"]
   workflow_dispatch:
 
 permissions:
@@ -36,6 +36,7 @@ jobs:
         working-directory: polymarket/dashboard/frontend
         env:
           PAGES_BUILD: "true"
+          NEXT_PUBLIC_WS_URL: "wss://gold-web-scraping-production.up.railway.app/ws"
         run: npm run build
 
       - name: Upload Pages artifact

@@ -64,7 +64,11 @@ async def _process_order(
     risk_mgr: RiskManager,
 ) -> None:
     async with sem:
-        oracle.strategy_phase = "LIMIT"
+        # Only momentum (Strategy A) drives the strategy phase display.
+        # Strategy B/C orders are background — don't let them stomp the phase.
+        is_momentum = intent.get("strategy") == "A"
+        if is_momentum:
+            oracle.strategy_phase = "LIMIT"
         order_id = f"order_{int(time.time() * 1000)}"
 
         log.info(
@@ -73,17 +77,19 @@ async def _process_order(
         )
 
         if PAPER_TRADING:
-            await _paper_fill(intent, order_id, oracle, risk_mgr)
+            await _paper_fill(intent, order_id, oracle, risk_mgr, is_momentum)
             return
 
         # Live trading
         try:
             resp = await _submit_to_clob(intent, order_id)
-            oracle.strategy_phase = "FILL"
+            if is_momentum:
+                oracle.strategy_phase = "FILL"
             await _track_until_terminal(resp, intent, oracle, risk_mgr)
         except Exception as exc:
             log.error(f"[OMS] Order submission failed: {exc!r}")
-            oracle.strategy_phase = "HOLD"
+            if is_momentum:
+                oracle.strategy_phase = "HOLD"
 
 
 async def _paper_fill(
@@ -91,18 +97,18 @@ async def _paper_fill(
     order_id: str,
     oracle: OracleBuffer,
     risk_mgr: RiskManager,
+    is_momentum: bool = False,
 ) -> None:
     """Simulate a fill in paper trading mode."""
-    # For FOK: assume fill at quoted ask; for POST_ONLY: assume placed
-    oracle.strategy_phase = "FILL"
+    if is_momentum:
+        oracle.strategy_phase = "FILL"
     fill_price = intent.get("price", 0.5)
     shares = intent.get("shares", 0.0)
     dollar_size = intent.get("dollar_size", 0.0)
 
     if intent.get("order_type") == "POST_ONLY":
         log.info(f"[OMS/paper] POST_ONLY placed: {order_id} @ {fill_price:.3f}")
-        oracle.strategy_phase = "HOLD"
-        return
+        return  # No phase change — maker quotes are silent background activity
 
     # Simulate position — use .get() so partially-formed arb orders don't crash
     pos = OpenPosition(
@@ -130,7 +136,8 @@ async def _paper_fill(
     }
     append_trade(trade_record)
     log.info(f"[OMS/paper] Filled: {order_id} {shares:.2f}sh @ {fill_price:.3f}")
-    oracle.strategy_phase = "HOLD"
+    if is_momentum:
+        oracle.strategy_phase = "HOLD"
 
 
 async def _submit_to_clob(intent: dict, order_id: str) -> dict:

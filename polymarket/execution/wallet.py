@@ -32,30 +32,19 @@ def get_clob_client():
     if not pk:
         raise EnvironmentError("POLYGON_PRIVATE_KEY not set — cannot initialize wallet")
 
-    try:
-        from polymarket_apis import PolymarketClobClient
-        _client = PolymarketClobClient(
-            private_key=pk,
-            api_key=api_key,
-            api_secret=api_secret,
-            api_passphrase=api_pass,
-        )
-        log.info("CLOB client initialized (polymarket-apis)")
-    except ImportError:
-        log.warning("polymarket-apis not installed — trying py_clob_client_v2")
-        from py_clob_client_v2 import ClobClient, ApiCreds
-        creds = ApiCreds(
-            api_key=api_key or "",
-            api_secret=api_secret or "",
-            api_passphrase=api_pass or "",
-        )
-        _client = ClobClient(
-            host="https://clob.polymarket.com",
-            chain_id=137,
-            key=pk,
-            creds=creds,
-        )
-        log.info("CLOB client initialized (py_clob_client_v2)")
+    from py_clob_client_v2 import ClobClient, ApiCreds
+    creds = ApiCreds(
+        api_key=api_key or "",
+        api_secret=api_secret or "",
+        api_passphrase=api_pass or "",
+    )
+    _client = ClobClient(
+        host="https://clob.polymarket.com",
+        chain_id=137,
+        key=pk,
+        creds=creds,
+    )
+    log.info("CLOB client initialized (py_clob_client_v2)")
 
     return _client
 

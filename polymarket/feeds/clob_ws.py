@@ -46,17 +46,25 @@ async def clob_ws_loop(oracle: OracleBuffer) -> None:
                     "markets": [market.condition_id],
                 }
                 await ws.send(json.dumps(subscribe))
+                # Mark connected immediately — paper markets produce no book events
+                # so last_clob_ts must be refreshed continuously while the socket
+                # is alive, not only on incoming messages.
+                oracle.last_clob_ts = time.time()
                 log.info(f"CLOB WS subscribed to {market.market_id}")
 
-                async for raw in ws:
-                    msg = json.loads(raw)
-                    event_type = msg.get("event_type", "")
-                    oracle.last_clob_ts = time.time()
+                keepalive = asyncio.create_task(_keepalive(oracle))
+                try:
+                    async for raw in ws:
+                        msg = json.loads(raw)
+                        event_type = msg.get("event_type", "")
+                        oracle.last_clob_ts = time.time()
 
-                    if event_type == "book":
-                        _update_orderbook(oracle, msg)
-                    elif event_type == "trade":
-                        _on_trade(oracle, msg)
+                        if event_type == "book":
+                            _update_orderbook(oracle, msg)
+                        elif event_type == "trade":
+                            _on_trade(oracle, msg)
+                finally:
+                    keepalive.cancel()
 
         except Exception as exc:
             log.warning(f"CLOB WS error: {exc!r} — reconnecting in 3s")
@@ -64,6 +72,13 @@ async def clob_ws_loop(oracle: OracleBuffer) -> None:
 
         # If active market changed, loop resubscribes automatically
         await asyncio.sleep(1)
+
+
+async def _keepalive(oracle: OracleBuffer) -> None:
+    """Refresh last_clob_ts every 10s so ws_clob stays green while connected."""
+    while True:
+        await asyncio.sleep(10)
+        oracle.last_clob_ts = time.time()
 
 
 def _update_orderbook(oracle: OracleBuffer, msg: dict) -> None:

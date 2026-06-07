@@ -23,7 +23,7 @@ from polymarket.risk import RiskManager
 log = logging.getLogger(__name__)
 
 GAMMA_BASE = "https://gamma-api.polymarket.com"
-SCAN_INTERVAL = 10.0
+SCAN_INTERVAL = 60.0   # Gamma API rate-limits at faster intervals
 MIN_BUNDLE_PROFIT = 0.025   # 2.5% net after fees
 MIN_MONOTONICITY_SPREAD = 0.03  # 3¢ violation needed to trade
 

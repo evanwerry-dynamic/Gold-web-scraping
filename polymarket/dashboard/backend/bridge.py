@@ -106,13 +106,15 @@ async def _broadcast_positions(oracle: OracleBuffer) -> None:
     for pos in oracle.open_positions.values():
         if pos.resolved:
             continue
-        # Current value: use active market price for the position's side
+        # Use live bid price if this position is in the current market window.
+        # Fall back to entry price (cost_basis / shares) so the position always
+        # shows rather than disappearing when the window rotates.
         if m and pos.market_id == m.market_id:
             mark = m.yes_bid if pos.side in ("YES", "UP") else m.no_bid
         else:
-            mark = 0.0
-        current_value = pos.shares * mark
-        unrealized_pnl = current_value - pos.cost_basis
+            mark = pos.cost_basis / pos.shares if pos.shares > 0 else 0.0
+        current_value = round(pos.shares * mark, 2)
+        unrealized_pnl = round(current_value - pos.cost_basis, 2)
         msg = {
             "type": "position",
             "data": {
@@ -120,8 +122,8 @@ async def _broadcast_positions(oracle: OracleBuffer) -> None:
                 "side": pos.side,
                 "shares": round(pos.shares, 4),
                 "cost_basis": round(pos.cost_basis, 2),
-                "current_value": round(current_value, 2),
-                "unrealized_pnl": round(unrealized_pnl, 2),
+                "current_value": current_value,
+                "unrealized_pnl": unrealized_pnl,
             },
         }
         await _connection_manager.broadcast(json.dumps(msg))

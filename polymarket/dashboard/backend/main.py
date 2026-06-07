@@ -2,7 +2,7 @@
 Mad Scientist Dashboard — FastAPI WebSocket server.
 
 Serves:
-- GET  /         → Redirects to Next.js frontend (or serves static build)
+- GET  /         → Service info + endpoint map
 - GET  /health   → JSON health check
 - WS   /ws       → Live dashboard event stream (broadcast to all tabs)
 
@@ -88,6 +88,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/")
+async def root():
+    return JSONResponse({
+        "service": "Mad Scientist Dashboard",
+        "status": "ok",
+        "endpoints": {
+            "health": "/health",
+            "websocket": "/ws",
+            "dashboard": "https://evanwerry-dynamic.github.io/Gold-web-scraping/",
+        }
+    })
 
 
 @app.get("/health")

@@ -1,19 +1,5 @@
-# Existing gold scraper deps
-requests>=2.0
-beautifulsoup4>=4.0
-apscheduler>=3.10
-python-dotenv>=1.0
-pandas>=1.0
-
-# Mad Scientist — Polymarket bot
-py_clob_client_v2==1.0.1
-scipy>=1.10.0
-numpy>=1.24.0
-websockets>=12.0
-web3>=6.0.0
-anthropic>=0.40.0
-
-# Dashboard backend
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 pydantic>=2.0.0
+python-dotenv>=1.0
+numpy>=1.24.0

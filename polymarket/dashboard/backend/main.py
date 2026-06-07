@@ -2,17 +2,11 @@
 Mad Scientist Dashboard — FastAPI WebSocket server.
 
 Serves:
-- GET  /         → Service info + endpoint map
+- GET  /         → Service info
 - GET  /health   → JSON health check
-- WS   /ws       → Live dashboard event stream (broadcast to all tabs)
-
-Run standalone:
-    uvicorn polymarket.dashboard.backend.main:app --host 0.0.0.0 --port 8000 --reload
-
-Or launch via run_mad_scientist.py which starts bot + dashboard together.
+- WS   /ws       → Live dashboard event stream
 """
 import asyncio
-import json
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -27,8 +21,6 @@ log = logging.getLogger(__name__)
 
 
 class ConnectionManager:
-    """Manage all active WebSocket connections (multiple browser tabs)."""
-
     def __init__(self):
         self._active: list[WebSocket] = []
 
@@ -38,7 +30,6 @@ class ConnectionManager:
         log.info(f"Dashboard client connected (total={len(self._active)})")
 
     def disconnect(self, ws: WebSocket) -> None:
-        self._active.discard(ws) if hasattr(self._active, "discard") else None
         if ws in self._active:
             self._active.remove(ws)
         log.info(f"Dashboard client disconnected (total={len(self._active)})")
@@ -62,7 +53,6 @@ manager = ConnectionManager()
 async def lifespan(app: FastAPI):
     set_connection_manager(manager)
     log.info("Dashboard WebSocket server ready")
-
     bot_task = None
     if os.getenv("POLYGON_PRIVATE_KEY"):
         try:
@@ -71,9 +61,7 @@ async def lifespan(app: FastAPI):
             log.info("Bot started as background task")
         except Exception as exc:
             log.error(f"Bot failed to start: {exc!r}")
-
     yield
-
     if bot_task and not bot_task.done():
         bot_task.cancel()
     log.info("Dashboard shutting down")
@@ -113,7 +101,6 @@ async def websocket_endpoint(ws: WebSocket):
     await manager.connect(ws)
     try:
         while True:
-            # Keep connection alive; bot pushes data via broadcast
             await ws.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(ws)

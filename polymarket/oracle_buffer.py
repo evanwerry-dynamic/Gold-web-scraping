@@ -80,6 +80,9 @@ class OracleBuffer:
     # Paper trading flag
     paper_trading: bool = True
 
+    # Dashboard event queue — OMS pushes trade dicts here, bridge drains them
+    pending_trade_events: deque = field(default_factory=deque)
+
     def window_seconds_remaining(self) -> float:
         if self.active_market is None:
             return 0.0

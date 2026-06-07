@@ -40,6 +40,8 @@ async def broadcast_loop(oracle: OracleBuffer) -> None:
             await _broadcast_health(oracle)
             await _broadcast_strategy(oracle)
             await _broadcast_book(oracle)
+            await _broadcast_positions(oracle)
+            await _drain_trade_events(oracle)
         except Exception as exc:
             log.debug(f"Broadcast error: {exc!r}")
 
@@ -96,3 +98,39 @@ async def _broadcast_book(oracle: OracleBuffer) -> None:
         },
     }
     await _connection_manager.broadcast(json.dumps(msg))
+
+
+async def _broadcast_positions(oracle: OracleBuffer) -> None:
+    """Send every open position to the dashboard every second."""
+    m = oracle.active_market
+    for pos in oracle.open_positions.values():
+        if pos.resolved:
+            continue
+        # Current value: use active market price for the position's side
+        if m and pos.market_id == m.market_id:
+            mark = m.yes_bid if pos.side in ("YES", "UP") else m.no_bid
+        else:
+            mark = 0.0
+        current_value = pos.shares * mark
+        unrealized_pnl = current_value - pos.cost_basis
+        msg = {
+            "type": "position",
+            "data": {
+                "market_id": pos.market_id,
+                "side": pos.side,
+                "shares": round(pos.shares, 4),
+                "cost_basis": round(pos.cost_basis, 2),
+                "current_value": round(current_value, 2),
+                "unrealized_pnl": round(unrealized_pnl, 2),
+            },
+        }
+        await _connection_manager.broadcast(json.dumps(msg))
+
+
+async def _drain_trade_events(oracle: OracleBuffer) -> None:
+    """Send any queued trade fill events to the dashboard."""
+    while oracle.pending_trade_events:
+        event = oracle.pending_trade_events.popleft()
+        await _connection_manager.broadcast(
+            json.dumps({"type": "trade", "data": event})
+        )

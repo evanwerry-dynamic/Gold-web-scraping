@@ -134,7 +134,22 @@ async def _paper_fill(
         "dollar_size": dollar_size,
         "paper": True,
     }
+    import datetime
     append_trade(trade_record)
+    # Push to dashboard trade feed
+    oracle.pending_trade_events.append({
+        "id": order_id,
+        "market_id": intent.get("market_id") or "unknown",
+        "strategy": intent.get("strategy") or "?",
+        "side": intent.get("side") or "YES",
+        "entry_price": fill_price,
+        "fair_value": intent.get("fair") or fill_price,
+        "edge": intent.get("edge") or 0.0,
+        "dollar_size": dollar_size,
+        "pnl": None,
+        "paper": True,
+        "timestamp": datetime.datetime.utcnow().isoformat(),
+    })
     log.info(f"[OMS/paper] Filled: {order_id} {shares:.2f}sh @ {fill_price:.3f}")
     if is_momentum:
         oracle.strategy_phase = "HOLD"

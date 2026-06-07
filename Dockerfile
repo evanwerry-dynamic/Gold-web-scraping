@@ -6,8 +6,8 @@ WORKDIR /app
 RUN apt-get update -qq && apt-get install -y --no-install-recommends \
     gcc g++ libssl-dev && rm -rf /var/lib/apt/lists/*
 
-COPY requirements-dashboard.txt .
-RUN pip install --no-cache-dir -r requirements-dashboard.txt && python -m uvicorn --version
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt && python -m uvicorn --version
 
 COPY . .
 RUN mkdir -p data/polymarket polymarket/state

@@ -52,11 +52,24 @@ async def run() -> None:
     from polymarket.sanity import sanity_loop
     from polymarket.calibrator import calibrator_loop
 
-    initial_bankroll = float(os.getenv("INITIAL_BANKROLL", "500"))
+    raw_bankroll = float(os.getenv("INITIAL_BANKROLL", "500") or "500")
+    initial_bankroll = raw_bankroll if raw_bankroll > 0 else 500.0
+    if initial_bankroll != raw_bankroll:
+        log.warning(f"INITIAL_BANKROLL={raw_bankroll} is not positive — defaulting to $500")
+
     paper = os.getenv("PAPER_TRADING", "true").lower() == "true"
+    has_key = bool(os.getenv("POLYGON_PRIVATE_KEY", "").strip())
+
+    log.info(f"Mad Scientist env: INITIAL_BANKROLL={initial_bankroll}, "
+             f"PAPER_TRADING={paper}, KEY_PRESENT={has_key}")
 
     oracle = OracleBuffer(bankroll=initial_bankroll, paper_trading=paper)
     restore_state(oracle)
+
+    # If restore loaded bankroll=0 (zero from a bad DB row), reset to initial
+    if oracle.bankroll <= 0:
+        log.warning(f"Bankroll is {oracle.bankroll} after restore — resetting to ${initial_bankroll}")
+        oracle.bankroll = initial_bankroll
 
     risk_mgr = RiskManager(bankroll=oracle.bankroll)
     order_queue: asyncio.Queue = asyncio.Queue()
@@ -64,6 +77,7 @@ async def run() -> None:
     mode = "PAPER TRADING" if paper else "LIVE TRADING"
     log.info(f"Mad Scientist starting in {mode} mode")
     log.info(f"   Bankroll: ${oracle.bankroll:.2f} pUSD")
+    log.info(f"   Key present: {has_key}")
     log.info(f"   Positions restored: {len(oracle.open_positions)}")
 
     await asyncio.gather(

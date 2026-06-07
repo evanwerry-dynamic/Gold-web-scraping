@@ -27,8 +27,11 @@ async def sanity_loop(oracle: OracleBuffer) -> None:
     while True:
         await asyncio.sleep(SANITY_INTERVAL)
         await _check_ghost_positions(oracle)
-        await _check_gas(oracle)
-        await _check_pusd_allowance(oracle)
+        # Gas and allowance checks only apply to live trading — paper mode
+        # has no wallet, so these would always fire false CRITICAL alerts.
+        if not oracle.paper_trading:
+            await _check_gas(oracle)
+            await _check_pusd_allowance(oracle)
         _check_ws_freshness(oracle)
 
 

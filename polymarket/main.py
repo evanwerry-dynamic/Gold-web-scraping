@@ -1,17 +1,8 @@
 """
 Mad Scientist — main entry point.
 
-Launches all asyncio coroutines via asyncio.gather():
-- 3 WebSocket data feeds (Binance, CLOB, Chainlink/Gamma)
-- 3 strategy loops (A: momentum, B: market making, C: arbitrage)
-- Order Management System
-- Redemption loop
-- Sanity check loop
-- State persistence loop
-- Nightly Claude calibration
-- Dashboard broadcast loop
-
-Set PAPER_TRADING=true (default) to run without touching real funds.
+Every coroutine is wrapped in _guard() which catches, logs, and restarts
+on crash. asyncio.gather() never sees a raw exception from a child loop.
 """
 import asyncio
 import logging
@@ -25,12 +16,22 @@ load_dotenv()
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("mad_scientist.log"),
-    ],
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 log = logging.getLogger("mad_scientist")
+
+
+async def _guard(coro, name: str) -> None:
+    """Run coro forever, restarting after any exception."""
+    while True:
+        try:
+            await coro
+            log.warning(f"{name} exited cleanly — restarting")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.error(f"{name} crashed: {exc!r} — restarting in 5s", exc_info=True)
+        await asyncio.sleep(5)
 
 
 async def run() -> None:
@@ -52,46 +53,35 @@ async def run() -> None:
     paper = os.getenv("PAPER_TRADING", "true").lower() == "true"
 
     oracle = OracleBuffer(bankroll=initial_bankroll, paper_trading=paper)
-    restore_state(oracle)  # Load persisted state if available
+    restore_state(oracle)
 
     risk_mgr = RiskManager(bankroll=oracle.bankroll)
     order_queue: asyncio.Queue = asyncio.Queue()
 
     mode = "PAPER TRADING" if paper else "LIVE TRADING"
-    log.info(f"🧪 Mad Scientist starting in {mode} mode")
+    log.info(f"Mad Scientist starting in {mode} mode")
     log.info(f"   Bankroll: ${oracle.bankroll:.2f} pUSD")
     log.info(f"   Positions restored: {len(oracle.open_positions)}")
 
     await asyncio.gather(
-        # Data feeds
-        binance_ws_loop(oracle),
-        clob_ws_loop(oracle),
-        chainlink_rtds_loop(oracle),
-        # Strategy loops
-        signal_loop(oracle, order_queue, risk_mgr),
-        maker_loop(oracle, order_queue, risk_mgr),
-        arb_loop(oracle, order_queue, risk_mgr),
-        # Execution & lifecycle
-        oms_loop(order_queue, oracle, risk_mgr),
-        redeem_loop(oracle),
-        # Maintenance
-        sanity_loop(oracle),
-        persist_loop(oracle),
-        calibrator_loop(),
-        # Dashboard (imported lazily to avoid hard dep on FastAPI at startup)
-        _dashboard_broadcast(oracle),
+        _guard(binance_ws_loop(oracle),                    "binance_ws"),
+        _guard(clob_ws_loop(oracle),                       "clob_ws"),
+        _guard(chainlink_rtds_loop(oracle),                "chainlink_rtds"),
+        _guard(signal_loop(oracle, order_queue, risk_mgr), "signal_loop"),
+        _guard(maker_loop(oracle, order_queue, risk_mgr),  "maker_loop"),
+        _guard(arb_loop(oracle, order_queue, risk_mgr),    "arb_loop"),
+        _guard(oms_loop(order_queue, oracle, risk_mgr),    "oms_loop"),
+        _guard(redeem_loop(oracle),                        "redeem_loop"),
+        _guard(sanity_loop(oracle),                        "sanity_loop"),
+        _guard(persist_loop(oracle),                       "persist_loop"),
+        _guard(calibrator_loop(),                          "calibrator"),
+        _guard(_dashboard_broadcast(oracle),               "dashboard_broadcast"),
     )
 
 
 async def _dashboard_broadcast(oracle) -> None:
-    """Import and start the dashboard broadcast loop if FastAPI is available."""
-    try:
-        from polymarket.dashboard.backend.bridge import broadcast_loop
-        await broadcast_loop(oracle)
-    except ImportError:
-        log.info("Dashboard backend not available — skipping broadcast loop")
-    except Exception as exc:
-        log.warning(f"Dashboard broadcast error: {exc!r}")
+    from polymarket.dashboard.backend.bridge import broadcast_loop
+    await broadcast_loop(oracle)
 
 
 def main() -> None:

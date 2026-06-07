@@ -51,8 +51,10 @@ async def arb_loop(
         # Type 1: Bundle arb on current active market
         if oracle.active_market:
             m = oracle.active_market
-            bundle_opps = _scan_bundle_arb(m.yes_ask, m.no_ask, m.market_id,
-                                            m.yes_token_id, m.no_token_id)
+            bundle_opps = _scan_bundle_arb(
+                m.yes_ask, m.no_ask, m.market_id, m.condition_id,
+                m.yes_token_id, m.no_token_id,
+            )
             for opp in bundle_opps:
                 log.info(f"[C] Bundle arb: {opp}")
                 await order_queue.put({**opp, "strategy": "C",
@@ -70,6 +72,7 @@ def _scan_bundle_arb(
     yes_ask: float,
     no_ask: float,
     market_id: str,
+    condition_id: str,
     yes_token_id: str,
     no_token_id: str,
 ) -> list[dict]:
@@ -85,6 +88,11 @@ def _scan_bundle_arb(
     return [{
         "action": "bundle_arb",
         "market_id": market_id,
+        "condition_id": condition_id,
+        "token_id": yes_token_id,   # OMS tracks YES leg; NO leg is symmetric
+        "side": "YES",
+        "price": yes_ask,
+        "dollar_size": 10.0,        # per leg
         "yes_token_id": yes_token_id,
         "no_token_id": no_token_id,
         "yes_ask": yes_ask,
@@ -114,6 +122,14 @@ def _scan_monotonicity(markets: list[dict]) -> list[dict]:
         if spread > MIN_MONOTONICITY_SPREAD:
             violations.append({
                 "action": "monotonicity_arb",
+                # OMS required fields (YES leg at lower strike is primary)
+                "market_id": lo["market_id"],
+                "condition_id": lo.get("condition_id", ""),
+                "token_id": lo["yes_token_id"],
+                "side": "YES",
+                "price": lo["yes_price"],
+                "dollar_size": 10.0,
+                # Both legs for reference / live execution
                 "buy_yes_market": lo["market_id"],
                 "buy_yes_token": lo["yes_token_id"],
                 "buy_yes_price": lo["yes_price"],
@@ -151,6 +167,7 @@ def _fetch_active_btc_markets() -> list[dict[str, Any]]:
             strike = float(match.group(1).replace(",", "")) if match else 0.0
             result.append({
                 "market_id": str(m.get("id")),
+                "condition_id": str(m.get("conditionId", "")),
                 "question": q,
                 "yes_token_id": str(tokens[0]) if tokens else "",
                 "no_token_id": str(tokens[1]) if len(tokens) > 1 else "",

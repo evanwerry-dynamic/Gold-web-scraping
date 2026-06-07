@@ -76,6 +76,7 @@ async def maker_loop(
             "strategy": "B",
             "action": "quote",
             "market_id": market.market_id,
+            "condition_id": market.condition_id,
             "token_id": market.yes_token_id,
             "side": "BUY",
             "price": bid_price,
@@ -90,6 +91,7 @@ async def maker_loop(
                 "strategy": "B",
                 "action": "quote",
                 "market_id": market.market_id,
+                "condition_id": market.condition_id,
                 "token_id": market.no_token_id,  # Selling YES = buying NO
                 "side": "BUY",
                 "price": 1.0 - ask_price,

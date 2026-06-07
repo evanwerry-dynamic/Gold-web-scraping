@@ -159,7 +159,11 @@ async def websocket_endpoint(ws: WebSocket):
     await manager.connect(ws)
     try:
         while True:
-            await ws.receive_text()
+            # Send a ping every 15s to keep Railway's proxy from killing idle connections
+            try:
+                await asyncio.wait_for(ws.receive_text(), timeout=15.0)
+            except asyncio.TimeoutError:
+                await ws.send_text(json.dumps({"type": "ping"}))
     except WebSocketDisconnect:
         manager.disconnect(ws)
     except Exception as exc:

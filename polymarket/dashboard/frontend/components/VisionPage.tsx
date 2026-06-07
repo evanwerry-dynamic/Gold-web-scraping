@@ -1,55 +1,75 @@
 "use client";
 import { usePnlStore } from "@/store";
 
-const G = "#00ff88";
-const DIM = "#00ff8855";
-const GOLD = "#ffd700";
-const RED = "#ff4444";
-const CYAN = "#00ccff";
+const OCEAN      = "#00c8d4";
+const DEEP       = "#041e30";
+const TURQ       = "#00e5cc";
+const CORAL      = "#ff6b6b";
+const SAND       = "#f4c97a";
+const SEAFOAM    = "#a7f3e8";
+const SKY        = "#87d7f0";
+const DIM        = "#2a4a5a";
+const HORIZON    = "#0a2d40";
 
-const S = {
-  section: {
-    borderLeft: `2px solid ${G}`,
-    paddingLeft: 16,
-    marginBottom: 28,
-  } as React.CSSProperties,
-  label: {
-    color: DIM,
-    fontSize: 10,
-    letterSpacing: "0.15em",
-    textTransform: "uppercase" as const,
-    marginBottom: 6,
-  },
-  value: {
-    color: G,
-    fontSize: 22,
-    fontWeight: 700,
-    letterSpacing: "-0.01em",
-  },
-  row: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "baseline",
-    borderBottom: "1px solid #0f0f0f",
-    padding: "7px 0",
-    gap: 12,
-  } as React.CSSProperties,
-  pill: (color: string) => ({
-    display: "inline-block",
-    background: color + "22",
-    border: `1px solid ${color}44`,
-    color: color,
-    fontSize: 9,
-    padding: "2px 8px",
-    letterSpacing: "0.12em",
-    textTransform: "uppercase" as const,
-  }),
-};
+const mono = '"JetBrains Mono", "Fira Code", "Courier New", monospace';
 
-function Bar({ pct, color = G }: { pct: number; color?: string }) {
+function Wave() {
   return (
-    <div style={{ flex: 1, height: 4, background: "#111", position: "relative", marginLeft: 12 }}>
-      <div style={{ position: "absolute", left: 0, top: 0, height: "100%", width: `${Math.min(100, pct)}%`, background: color }} />
+    <div style={{ color: OCEAN + "44", fontSize: 11, letterSpacing: 2, margin: "10px 0", userSelect: "none" }}>
+      ≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈
+    </div>
+  );
+}
+
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <div style={{
+      color: SKY,
+      fontSize: 9,
+      letterSpacing: "0.22em",
+      textTransform: "uppercase",
+      marginBottom: 12,
+      display: "flex",
+      alignItems: "center",
+      gap: 8,
+    }}>
+      <span style={{ color: OCEAN }}>◆</span>
+      {children}
+      <span style={{ flex: 1, height: 1, background: `linear-gradient(to right, ${OCEAN}44, transparent)` }} />
+    </div>
+  );
+}
+
+function Row({ label, value, sub, valueColor = TURQ }: {
+  label: string; value: string; sub?: string; valueColor?: string;
+}) {
+  return (
+    <div style={{
+      display: "flex",
+      justifyContent: "space-between",
+      alignItems: "baseline",
+      borderBottom: `1px solid ${DIM}55`,
+      padding: "8px 0",
+      gap: 12,
+    }}>
+      <span style={{ color: DIM, fontSize: 10, flexShrink: 0 }}>{label}</span>
+      <div style={{ textAlign: "right" }}>
+        <span style={{ color: valueColor, fontSize: 12, fontWeight: 700 }}>{value}</span>
+        {sub && <div style={{ color: DIM, fontSize: 9, marginTop: 1 }}>{sub}</div>}
+      </div>
+    </div>
+  );
+}
+
+function ProgressBar({ pct, color = TURQ }: { pct: number; color?: string }) {
+  return (
+    <div style={{ height: 6, background: DIM + "55", position: "relative", borderRadius: 0 }}>
+      <div style={{
+        position: "absolute", left: 0, top: 0, height: "100%",
+        width: `${Math.min(100, pct)}%`,
+        background: `linear-gradient(to right, ${color}88, ${color})`,
+        boxShadow: `0 0 8px ${color}66`,
+      }} />
     </div>
   );
 }
@@ -61,7 +81,6 @@ export function VisionPage() {
   const current = pnl.bankroll || 0;
   const pct = Math.min(100, (current / goal) * 100);
   const remaining = Math.max(0, goal - current);
-
   const daysLeft = 60;
   const dailyNeeded = remaining > 0 ? (remaining / daysLeft).toFixed(0) : "0";
 
@@ -69,119 +88,194 @@ export function VisionPage() {
     <div style={{
       flex: 1,
       overflowY: "auto",
-      padding: "24px 28px",
-      background: "#050505",
+      background: `linear-gradient(180deg, ${DEEP} 0%, #051a2e 40%, #061520 100%)`,
+      fontFamily: mono,
+      fontSize: 12,
+      color: SEAFOAM,
     }}>
-      {/* Header */}
-      <div style={{ marginBottom: 32 }}>
-        <div style={{ color: DIM, fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", marginBottom: 4 }}>
-          Mad Scientist — Autonomous Trading System
+      {/* Hero */}
+      <div style={{
+        padding: "32px 28px 20px",
+        background: `linear-gradient(180deg, #020e1a 0%, transparent 100%)`,
+        borderBottom: `1px solid ${OCEAN}22`,
+        textAlign: "center",
+      }}>
+        <div style={{ color: OCEAN + "88", fontSize: 9, letterSpacing: "0.3em", textTransform: "uppercase", marginBottom: 12 }}>
+          ◆ &nbsp; destination locked &nbsp; ◆
         </div>
-        <div style={{ color: GOLD, fontSize: 26, fontWeight: 700, letterSpacing: "-0.02em", lineHeight: 1.2 }}>
-          $10,000 in 60 Days
+
+        {/* ASCII overwater bungalow */}
+        <pre style={{
+          color: OCEAN + "66",
+          fontSize: 9,
+          lineHeight: 1.4,
+          margin: "0 auto 16px",
+          userSelect: "none",
+          display: "inline-block",
+          textAlign: "left",
+        }}>{`        __|__
+    ---(___)---
+   /    | |    \\
+  /  ~~~|_|~~~  \\
+ /_______________\\
+ |   MALDIVES    |
+ |  OVERWATER    |
+ |   VILLA  🌴   |
+/~~~~~~~~~~~~~~~~~\\
+  ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈`}</pre>
+
+        <div style={{
+          color: SAND,
+          fontSize: 28,
+          fontWeight: 700,
+          letterSpacing: "-0.02em",
+          lineHeight: 1.1,
+          marginBottom: 6,
+        }}>
+          $10,000
         </div>
-        <div style={{ color: "#555", fontSize: 11, marginTop: 6 }}>
-          All-inclusive resort. Fully funded by the bot. No compromise.
+        <div style={{ color: SKY, fontSize: 12, marginBottom: 4 }}>
+          Overwater Bungalow · North Malé Atoll
+        </div>
+        <div style={{ color: DIM, fontSize: 10 }}>
+          Flights · 7 nights all-inclusive · fully autonomous
         </div>
       </div>
+
+      <Wave />
 
       {/* Progress */}
-      <div style={{ ...S.section, borderColor: GOLD }}>
-        <div style={S.label}>Mission Progress</div>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 10 }}>
-          <span style={{ ...S.value, color: GOLD }}>${current.toLocaleString("en-US", { maximumFractionDigits: 0 })}</span>
-          <span style={{ color: DIM, fontSize: 12 }}>/ ${goal.toLocaleString()}</span>
-          <span style={{ color: GOLD, fontSize: 14, marginLeft: "auto" }}>{pct.toFixed(1)}%</span>
+      <div style={{ padding: "0 28px 20px" }}>
+        <SectionLabel>Departure Fund</SectionLabel>
+
+        <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 12 }}>
+          <span style={{ color: SAND, fontSize: 26, fontWeight: 700 }}>
+            ${current.toLocaleString("en-US", { maximumFractionDigits: 0 })}
+          </span>
+          <span style={{ color: DIM, fontSize: 12 }}>/ $10,000</span>
+          <span style={{ color: pct >= 100 ? TURQ : SAND, fontSize: 13, fontWeight: 700, marginLeft: "auto" }}>
+            {pct.toFixed(1)}%
+          </span>
         </div>
-        <div style={{ height: 8, background: "#111", position: "relative", marginBottom: 8 }}>
-          <div style={{ position: "absolute", left: 0, top: 0, height: "100%", width: `${pct}%`, background: GOLD }} />
+
+        <ProgressBar pct={pct} color={SAND} />
+
+        <div style={{
+          display: "flex",
+          justifyContent: "space-between",
+          marginTop: 8,
+          color: DIM,
+          fontSize: 10,
+        }}>
+          <span>Remaining: <span style={{ color: OCEAN }}>${remaining.toLocaleString("en-US", { maximumFractionDigits: 0 })}</span></span>
+          <span>Need <span style={{ color: CORAL }}>${dailyNeeded}/day</span> · {daysLeft} days</span>
         </div>
-        <div style={{ display: "flex", justifyContent: "space-between", color: DIM, fontSize: 10 }}>
-          <span>Remaining: ${remaining.toLocaleString("en-US", { maximumFractionDigits: 0 })}</span>
-          <span>Need ~${dailyNeeded}/day · {daysLeft} days on clock</span>
+
+        <Wave />
+
+        {/* Booking breakdown */}
+        <SectionLabel>Resort Breakdown</SectionLabel>
+        <Row label="Overwater villa · 7 nights" value="$5,800" valueColor={SEAFOAM} />
+        <Row label="Return flights (x2)" value="$2,400" valueColor={SEAFOAM} />
+        <Row label="Dining · excursions · spa" value="$1,200" valueColor={SEAFOAM} />
+        <Row label="Buffer" value="$600" valueColor={DIM} />
+        <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderTop: `1px solid ${OCEAN}44`, marginTop: 4 }}>
+          <span style={{ color: SKY, fontSize: 11, fontWeight: 700 }}>Total target</span>
+          <span style={{ color: SAND, fontSize: 14, fontWeight: 700 }}>$10,000</span>
         </div>
       </div>
 
-      {/* The Edge */}
-      <div style={S.section}>
-        <div style={S.label}>The Edge — Why This Works</div>
-        {[
-          ["Late-window momentum", "BTC moves >0.10% in final 10s → binary resolves with 75%+ certainty", G],
-          ["Oracle lag arbitrage", "Chainlink settles 2-5s after window — bot enters at T-10s, captures drift", G],
-          ["Dynamic fee filter", "Only trade when entry price >$0.70 — fee drops from 3.15% to 0.54%", G],
-          ["Maker rebates", "Post-only limit orders earn 20-50% rebate on every filled quote", CYAN],
-          ["YES+NO bundle arb", "Buy both sides <$1.00 net — guaranteed profit, zero directional risk", CYAN],
-        ].map(([name, desc, color]) => (
-          <div key={name as string} style={S.row}>
-            <div>
-              <div style={{ color: color as string, fontSize: 11, fontWeight: 700, marginBottom: 2 }}>{name}</div>
-              <div style={{ color: "#444", fontSize: 10 }}>{desc}</div>
-            </div>
-          </div>
-        ))}
-      </div>
+      <Wave />
 
-      {/* Strategy breakdown */}
-      <div style={S.section}>
-        <div style={S.label}>Strategy Allocation</div>
+      {/* Strategy */}
+      <div style={{ padding: "0 28px 20px" }}>
+        <SectionLabel>How the Bot Gets There</SectionLabel>
         {[
-          { name: "A — Late Window Momentum", target: 70, color: G, note: "Primary · FOK market buy at T-10s" },
-          { name: "B — Market Making", target: 20, color: CYAN, note: "Passive · post-only quotes + rebates" },
-          { name: "C — Bundle Arbitrage", target: 10, color: GOLD, note: "Opportunistic · risk-free when spread >2.5%" },
+          { name: "A — Late Window Momentum", alloc: 70, color: TURQ,  note: "BTC moves >0.10% in final 10s · FOK buy · hold to resolution" },
+          { name: "B — Market Making",         alloc: 20, color: SKY,   note: "Post-only quotes · 20-50% maker rebate · passive income" },
+          { name: "C — Bundle Arbitrage",      alloc: 10, color: OCEAN, note: "YES+NO <$1.00 net · risk-free · rare but free money" },
         ].map((s) => (
-          <div key={s.name} style={{ marginBottom: 12 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+          <div key={s.name} style={{ marginBottom: 16 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
               <span style={{ color: s.color, fontSize: 11, fontWeight: 700 }}>{s.name}</span>
-              <span style={{ color: DIM, fontSize: 10 }}>{s.target}%</span>
+              <span style={{ color: DIM, fontSize: 10 }}>{s.alloc}%</span>
             </div>
-            <div style={{ display: "flex", alignItems: "center", marginBottom: 2 }}>
-              <Bar pct={s.target} color={s.color} />
-            </div>
-            <div style={{ color: "#333", fontSize: 10 }}>{s.note}</div>
+            <ProgressBar pct={s.alloc} color={s.color} />
+            <div style={{ color: DIM, fontSize: 10, marginTop: 4 }}>{s.note}</div>
           </div>
         ))}
       </div>
 
-      {/* Risk constitution */}
-      <div style={{ ...S.section, borderColor: RED }}>
-        <div style={{ ...S.label, color: RED + "99" }}>Risk Constitution — Inviolable Rules</div>
+      <Wave />
+
+      {/* Risk rules */}
+      <div style={{ padding: "0 28px 20px" }}>
+        <SectionLabel>Inviolable Risk Rules</SectionLabel>
         {[
-          ["Max per trade", "3% of bankroll", "Quarter-Kelly sizing"],
-          ["Daily loss limit", "5% of bankroll", "Hard stop — no override"],
-          ["Total loss halt", "40% of initial capital", "Permanent — protect the seed"],
-          ["Correlated exposure", "20% max in BTC positions", "No concentration blowup"],
-          ["Loss velocity", "5 losses in 30 min → pause", "Streak protection"],
-          ["Entry price floor", "$0.70 minimum", "Fee eats edge below this"],
+          ["Max per trade",       "3% bankroll",        "Quarter-Kelly — preserves capital"],
+          ["Daily stop-loss",     "−5% / day",          "Locks in — no override, no exceptions"],
+          ["Total loss halt",     "−40% all-time",      "Protect the seed money permanently"],
+          ["BTC concentration",  "20% max exposure",   "No correlated blowup scenario"],
+          ["Loss streak pause",  "5 losses / 30 min",  "Cool-off before re-entering"],
+          ["Entry floor",        "Ask > $0.70",        "Fee is 0.54% here vs 3.15% at $0.50"],
         ].map(([rule, limit, why]) => (
-          <div key={rule as string} style={S.row}>
-            <span style={{ color: "#555", fontSize: 10, width: 140, flexShrink: 0 }}>{rule}</span>
-            <span style={{ color: RED, fontSize: 11, fontWeight: 700, flex: 1 }}>{limit}</span>
-            <span style={{ color: "#333", fontSize: 10 }}>{why}</span>
+          <div key={rule as string} style={{
+            display: "flex",
+            gap: 8,
+            borderBottom: `1px solid ${DIM}33`,
+            padding: "7px 0",
+            alignItems: "flex-start",
+          }}>
+            <span style={{ color: DIM, fontSize: 10, width: 130, flexShrink: 0 }}>{rule}</span>
+            <span style={{ color: CORAL, fontSize: 11, fontWeight: 700, flex: 1 }}>{limit}</span>
+            <span style={{ color: DIM, fontSize: 9, textAlign: "right" }}>{why}</span>
           </div>
         ))}
       </div>
 
-      {/* Build phases */}
-      <div style={S.section}>
-        <div style={S.label}>Deployment Phases</div>
+      <Wave />
+
+      {/* Phases */}
+      <div style={{ padding: "0 28px 20px" }}>
+        <SectionLabel>Mission Phases</SectionLabel>
         {[
-          { phase: "1", name: "Dashboard Live", status: "done", desc: "FastAPI WebSocket + Next.js dashboard on Railway + GitHub Pages" },
-          { phase: "2", name: "Paper Trading", status: "next", desc: "Add POLYGON_PRIVATE_KEY to Railway → bot starts in paper mode, no real orders" },
-          { phase: "3", name: "Wallet Setup", status: "pending", desc: "Fund wallet with 5 POL gas + wrap USDC→pUSD via CollateralOnramp" },
-          { phase: "4", name: "Live at $500", status: "pending", desc: "Deploy with $500 pUSD, max $10/trade — validate fills + redemptions" },
-          { phase: "5", name: "Scale to Goal", status: "pending", desc: "Compound winnings — $500→$2k→$5k→$10k over 60 days" },
+          { n: "1", name: "Go Live",        status: "done",    desc: "Dashboard + Railway backend deployed · WebSocket streaming" },
+          { n: "2", name: "Paper Trading",  status: "next",    desc: "Add POLYGON_PRIVATE_KEY to Railway · bot runs, no real orders" },
+          { n: "3", name: "Wallet Setup",   status: "pending", desc: "5 POL gas · USDC → pUSD · CLOB API credentials" },
+          { n: "4", name: "$500 Live",      status: "pending", desc: "First real trades · max $10/order · validate full cycle" },
+          { n: "5", name: "$10k Resort",    status: "pending", desc: "Compound to goal · book the overwater villa · fly" },
         ].map((p) => {
-          const color = p.status === "done" ? G : p.status === "next" ? GOLD : "#333";
-          const badge = p.status === "done" ? "✓ LIVE" : p.status === "next" ? "▶ NEXT" : "○ PENDING";
+          const color = p.status === "done" ? TURQ : p.status === "next" ? SAND : DIM;
+          const badge = p.status === "done" ? "✓ LIVE" : p.status === "next" ? "▶ NEXT" : "○";
           return (
-            <div key={p.phase} style={{ ...S.row, alignItems: "flex-start" }}>
-              <span style={{ color, fontSize: 18, fontWeight: 700, width: 20, flexShrink: 0, marginTop: 1 }}>{p.phase}</span>
+            <div key={p.n} style={{
+              display: "flex",
+              gap: 12,
+              borderBottom: `1px solid ${DIM}33`,
+              padding: "10px 0",
+              alignItems: "flex-start",
+            }}>
+              <div style={{
+                color,
+                fontSize: 16,
+                fontWeight: 700,
+                width: 18,
+                flexShrink: 0,
+                textShadow: p.status !== "pending" ? `0 0 12px ${color}` : "none",
+              }}>{p.n}</div>
               <div style={{ flex: 1 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
                   <span style={{ color, fontSize: 11, fontWeight: 700 }}>{p.name}</span>
-                  <span style={S.pill(color)}>{badge}</span>
+                  <span style={{
+                    fontSize: 8,
+                    color,
+                    border: `1px solid ${color}44`,
+                    background: color + "11",
+                    padding: "1px 6px",
+                    letterSpacing: "0.1em",
+                  }}>{badge}</span>
                 </div>
-                <span style={{ color: "#333", fontSize: 10 }}>{p.desc}</span>
+                <span style={{ color: DIM, fontSize: 10 }}>{p.desc}</span>
               </div>
             </div>
           );
@@ -189,24 +283,28 @@ export function VisionPage() {
       </div>
 
       {/* Win condition */}
-      <div style={{
-        border: `1px solid ${GOLD}33`,
-        background: GOLD + "08",
-        padding: "16px 20px",
-        marginBottom: 24,
-      }}>
-        <div style={{ color: GOLD, fontSize: 13, fontWeight: 700, marginBottom: 8, letterSpacing: "0.05em" }}>
-          ◈ WIN CONDITION
+      <div style={{ padding: "0 28px 32px" }}>
+        <Wave />
+        <div style={{
+          border: `1px solid ${OCEAN}44`,
+          background: `linear-gradient(135deg, ${OCEAN}08, ${TURQ}04)`,
+          padding: "20px 24px",
+          textAlign: "center",
+          boxShadow: `inset 0 0 40px ${OCEAN}08`,
+        }}>
+          <div style={{ color: OCEAN, fontSize: 9, letterSpacing: "0.25em", textTransform: "uppercase", marginBottom: 10 }}>
+            ≈ &nbsp; win condition &nbsp; ≈
+          </div>
+          <div style={{ color: SEAFOAM, fontSize: 12, lineHeight: 1.9 }}>
+            $10,000 withdrawn to bank.<br />
+            <span style={{ color: SKY }}>Flights booked. Villa confirmed.</span><br />
+            Turquoise water. Overwater deck.<br />
+            <span style={{ color: SAND, fontWeight: 700 }}>The bot paid for all of it.</span>
+          </div>
+          <div style={{ marginTop: 14, color: OCEAN + "55", fontSize: 10, letterSpacing: 3 }}>
+            ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈
+          </div>
         </div>
-        <div style={{ color: "#888", fontSize: 11, lineHeight: 1.7 }}>
-          $10,000 pUSD redeemed → converted to USDC → withdrawn to bank.<br />
-          Flight + hotel booked. All-inclusive. Fully autonomous. Bot paid for it.<br />
-          <span style={{ color: GOLD }}>Deadline: 60 days from first live trade.</span>
-        </div>
-      </div>
-
-      <div style={{ color: "#222", fontSize: 10, textAlign: "center", paddingBottom: 8 }}>
-        MAD SCIENTIST v1.0 · POLYMARKET BTC 5-MIN UP/DOWN · PAPER MODE ACTIVE
       </div>
     </div>
   );

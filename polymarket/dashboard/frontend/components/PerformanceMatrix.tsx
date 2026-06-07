@@ -8,9 +8,10 @@ export function PerformanceMatrix() {
 
   const stats = STRATEGIES.map((s) => {
     const st = trades.filter((t) => t.strategy === s);
-    const wins = st.filter((t) => (t.pnl ?? 0) > 0).length;
-    const total_pnl = st.reduce((sum, t) => sum + (t.pnl ?? 0), 0);
-    return { strategy: s, count: st.length, wins, total_pnl };
+    const closed = st.filter((t) => t.pnl !== null);
+    const wins = closed.filter((t) => (t.pnl ?? 0) > 0).length;
+    const total_pnl = closed.reduce((sum, t) => sum + (t.pnl ?? 0), 0);
+    return { strategy: s, count: st.length, closed: closed.length, wins, total_pnl };
   });
 
   return (
@@ -34,8 +35,8 @@ export function PerformanceMatrix() {
                 {row.strategy === "A" ? "Momentum" : row.strategy === "B" ? "Market Make" : "Arbitrage"}
               </td>
               <td style={{ padding: "4px", textAlign: "right", color: "#ccc" }}>{row.count}</td>
-              <td style={{ padding: "4px", textAlign: "right", color: row.count > 0 && row.wins / row.count >= 0.7 ? "#00ff88" : "#888" }}>
-                {row.count > 0 ? `${((row.wins / row.count) * 100).toFixed(0)}%` : "—"}
+              <td style={{ padding: "4px", textAlign: "right", color: row.closed > 0 && row.wins / row.closed >= 0.7 ? "#00ff88" : "#888" }}>
+                {row.closed > 0 ? `${((row.wins / row.closed) * 100).toFixed(0)}%` : "—"}
               </td>
               <td style={{ padding: "4px", textAlign: "right", color: row.total_pnl >= 0 ? "#00ff88" : "#ff4466" }}>
                 {row.total_pnl >= 0 ? "+" : ""}${row.total_pnl.toFixed(2)}

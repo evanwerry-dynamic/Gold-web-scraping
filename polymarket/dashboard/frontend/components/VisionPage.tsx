@@ -25,7 +25,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <div style={{
       color: SKY,
-      fontSize: 9,
+      fontSize: 11,
       letterSpacing: "0.22em",
       textTransform: "uppercase",
       marginBottom: 12,
@@ -90,7 +90,7 @@ export function VisionPage() {
       overflowY: "auto",
       background: `linear-gradient(180deg, ${DEEP} 0%, #051a2e 40%, #061520 100%)`,
       fontFamily: mono,
-      fontSize: 12,
+      fontSize: 13,
       color: SEAFOAM,
     }}>
       {/* Hero */}
@@ -100,14 +100,14 @@ export function VisionPage() {
         borderBottom: `1px solid ${OCEAN}22`,
         textAlign: "center",
       }}>
-        <div style={{ color: OCEAN + "88", fontSize: 9, letterSpacing: "0.3em", textTransform: "uppercase", marginBottom: 12 }}>
+        <div style={{ color: OCEAN + "88", fontSize: 11, letterSpacing: "0.3em", textTransform: "uppercase", marginBottom: 12 }}>
           ◆ &nbsp; destination locked &nbsp; ◆
         </div>
 
         {/* ASCII overwater bungalow */}
         <pre style={{
           color: OCEAN + "66",
-          fontSize: 9,
+          fontSize: 11,
           lineHeight: 1.4,
           margin: "0 auto 16px",
           userSelect: "none",
@@ -165,7 +165,7 @@ export function VisionPage() {
           justifyContent: "space-between",
           marginTop: 8,
           color: DIM,
-          fontSize: 10,
+          fontSize: 12,
         }}>
           <span>Remaining: <span style={{ color: OCEAN }}>${remaining.toLocaleString("en-US", { maximumFractionDigits: 0 })}</span></span>
           <span>Need <span style={{ color: CORAL }}>${dailyNeeded}/day</span> · {daysLeft} days</span>
@@ -201,7 +201,7 @@ export function VisionPage() {
               <span style={{ color: DIM, fontSize: 10 }}>{s.alloc}%</span>
             </div>
             <ProgressBar pct={s.alloc} color={s.color} />
-            <div style={{ color: DIM, fontSize: 10, marginTop: 4 }}>{s.note}</div>
+            <div style={{ color: DIM, fontSize: 12, marginTop: 4 }}>{s.note}</div>
           </div>
         ))}
       </div>
@@ -226,9 +226,9 @@ export function VisionPage() {
             padding: "7px 0",
             alignItems: "flex-start",
           }}>
-            <span style={{ color: DIM, fontSize: 10, width: 130, flexShrink: 0 }}>{rule}</span>
+            <span style={{ color: DIM, fontSize: 12, width: 130, flexShrink: 0 }}>{rule}</span>
             <span style={{ color: CORAL, fontSize: 11, fontWeight: 700, flex: 1 }}>{limit}</span>
-            <span style={{ color: DIM, fontSize: 9, textAlign: "right" }}>{why}</span>
+            <span style={{ color: DIM, fontSize: 11, textAlign: "right" }}>{why}</span>
           </div>
         ))}
       </div>
@@ -292,7 +292,7 @@ export function VisionPage() {
           textAlign: "center",
           boxShadow: `inset 0 0 40px ${OCEAN}08`,
         }}>
-          <div style={{ color: OCEAN, fontSize: 9, letterSpacing: "0.25em", textTransform: "uppercase", marginBottom: 10 }}>
+          <div style={{ color: OCEAN, fontSize: 11, letterSpacing: "0.25em", textTransform: "uppercase", marginBottom: 10 }}>
             ≈ &nbsp; win condition &nbsp; ≈
           </div>
           <div style={{ color: SEAFOAM, fontSize: 12, lineHeight: 1.9 }}>
@@ -301,7 +301,7 @@ export function VisionPage() {
             Turquoise water. Overwater deck.<br />
             <span style={{ color: SAND, fontWeight: 700 }}>The bot paid for all of it.</span>
           </div>
-          <div style={{ marginTop: 14, color: OCEAN + "55", fontSize: 10, letterSpacing: 3 }}>
+          <div style={{ marginTop: 14, color: OCEAN + "55", fontSize: 12, letterSpacing: 3 }}>
             ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈
           </div>
         </div>

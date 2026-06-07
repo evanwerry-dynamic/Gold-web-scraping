@@ -6,7 +6,7 @@ export function TradeFeed() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <div style={{ color: "#999", fontSize: 10, letterSpacing: 1, padding: "8px 12px 4px" }}>
+      <div style={{ color: "#999", fontSize: 12, letterSpacing: 1, padding: "8px 12px 4px" }}>
         LIVE TRADE FEED
       </div>
       <div className="scroll-panel" style={{ flex: 1, padding: "0 12px" }}>

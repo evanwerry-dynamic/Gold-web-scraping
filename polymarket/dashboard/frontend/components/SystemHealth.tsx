@@ -22,7 +22,7 @@ export function SystemHealth() {
 
   return (
     <div style={{ padding: 12, borderLeft: "1px solid #1e1e1e", fontSize: 11 }}>
-      <div style={{ color: "#999", marginBottom: 8, fontSize: 10, letterSpacing: 1 }}>
+      <div style={{ color: "#999", marginBottom: 8, fontSize: 12, letterSpacing: 1 }}>
         SYSTEM HEALTH
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>

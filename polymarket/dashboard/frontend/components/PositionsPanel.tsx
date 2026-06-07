@@ -16,7 +16,7 @@ export function PositionsPanel() {
         flexDirection: "column",
       }}
     >
-      <div style={{ color: "#999", fontSize: 10, letterSpacing: 1, marginBottom: 8 }}>
+      <div style={{ color: "#999", fontSize: 12, letterSpacing: 1, marginBottom: 8 }}>
         OPEN POSITIONS
         <span style={{ color: "#777", marginLeft: 8 }}>{entries.length}</span>
       </div>
@@ -43,12 +43,12 @@ export function PositionsPanel() {
                     <td
                       style={{
                         padding: "4px",
-                        color: "#666",
+                        color: "#aaa",
                         maxWidth: 70,
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
-                        fontSize: 10,
+                        fontSize: 12,
                       }}
                       title={pos.market_id}
                     >
@@ -64,7 +64,7 @@ export function PositionsPanel() {
                     >
                       {pos.side}
                     </td>
-                    <td style={{ padding: "4px", textAlign: "right", color: "#666" }}>
+                    <td style={{ padding: "4px", textAlign: "right", color: "#aaa" }}>
                       {pos.shares.toFixed(1)}
                     </td>
                     <td style={{ padding: "4px", textAlign: "right", color: "#999" }}>

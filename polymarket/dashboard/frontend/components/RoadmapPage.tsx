@@ -15,7 +15,7 @@ function Section({ title, children, color = G }: { title: string; children: Reac
         display: "flex", alignItems: "center", gap: 10, marginBottom: 14,
         borderBottom: `1px solid ${color}33`, paddingBottom: 8,
       }}>
-        <span style={{ color, fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase" as const }}>
+        <span style={{ color, fontSize: 11, letterSpacing: "0.2em", textTransform: "uppercase" as const }}>
           ◆ {title}
         </span>
       </div>
@@ -55,7 +55,7 @@ function Phase({
       {/* Env vars to add */}
       {env && env.length > 0 && (
         <div style={{ background: "#0d0d0d", border: "1px solid #2a2a2a", padding: "10px 14px", marginBottom: 12 }}>
-          <div style={{ color: "#aaa", fontSize: 9, letterSpacing: "0.15em", marginBottom: 8 }}>
+          <div style={{ color: "#aaa", fontSize: 11, letterSpacing: "0.15em", marginBottom: 8 }}>
             RAILWAY → VARIABLES → ADD:
           </div>
           {env.map(e => (
@@ -65,7 +65,7 @@ function Phase({
                 <span style={{ color: "#aaa" }}>=</span>
                 <span style={{ color: GOLD, fontSize: 11 }}>{e.value}</span>
               </div>
-              <div style={{ color: "#bbb", fontSize: 10, marginLeft: 0, marginTop: 2 }}>{e.note}</div>
+              <div style={{ color: "#bbb", fontSize: 12, marginLeft: 0, marginTop: 2 }}>{e.note}</div>
             </div>
           ))}
         </div>
@@ -106,10 +106,10 @@ export function RoadmapPage() {
   return (
     <div style={{
       flex: 1, overflowY: "auto", padding: "24px 28px",
-      background: "#050505", fontFamily: mono, fontSize: 12, color: G,
+      background: "#0a0a0a", fontFamily: mono, fontSize: 13, color: G,
     }}>
       <div style={{ marginBottom: 28 }}>
-        <div style={{ color: "#aaa", fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", marginBottom: 4 }}>
+        <div style={{ color: "#aaa", fontSize: 11, letterSpacing: "0.2em", textTransform: "uppercase", marginBottom: 4 }}>
           Mad Scientist · Deployment Roadmap
         </div>
         <div style={{ color: G, fontSize: 22, fontWeight: 700, letterSpacing: "-0.02em" }}>
@@ -232,7 +232,7 @@ export function RoadmapPage() {
         ))}
       </Section>
 
-      <div style={{ color: "#999", fontSize: 10, textAlign: "center", paddingBottom: 8 }}>
+      <div style={{ color: "#999", fontSize: 12, textAlign: "center", paddingBottom: 8 }}>
         MAD SCIENTIST v1.0 · FOLLOW THE PHASES · DO NOT SKIP STEPS
       </div>
     </div>

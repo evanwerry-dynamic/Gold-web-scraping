@@ -25,10 +25,10 @@ const TABS: { id: View; label: string }[] = [
 ];
 
 const BASE = {
-  background: "#050505",
+  background: "#0a0a0a",
   color: "#00ff88",
   fontFamily: '"JetBrains Mono", "Fira Code", "Courier New", monospace',
-  fontSize: 12,
+  fontSize: 13,
 };
 
 export default function Dashboard() {
@@ -62,7 +62,7 @@ export default function Dashboard() {
                 borderColor: active ? "#00ff88" : "#1c1c1c",
                 padding: "3px 16px",
                 fontFamily: "inherit",
-                fontSize: 10,
+                fontSize: 12,
                 fontWeight: 700,
                 cursor: "pointer",
                 letterSpacing: "0.08em",
@@ -76,7 +76,7 @@ export default function Dashboard() {
           );
         })}
         <div style={{ flex: 1 }} />
-        <div style={{ color: "#999", fontSize: 9, letterSpacing: "0.1em" }}>
+        <div style={{ color: "#999", fontSize: 11, letterSpacing: "0.1em" }}>
           MAD SCIENTIST v1.0
         </div>
       </div>

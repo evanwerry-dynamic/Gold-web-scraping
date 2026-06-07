@@ -7,7 +7,7 @@ export function OrderbookDepth() {
   if (!book) {
     return (
       <div style={{ padding: 12, color: "#777", fontSize: 11 }}>
-        <div style={{ color: "#999", fontSize: 10, letterSpacing: 1, marginBottom: 8 }}>
+        <div style={{ color: "#999", fontSize: 12, letterSpacing: 1, marginBottom: 8 }}>
           ORDERBOOK
         </div>
         Awaiting market data...
@@ -20,7 +20,7 @@ export function OrderbookDepth() {
 
   return (
     <div style={{ padding: 12, fontSize: 11 }}>
-      <div style={{ color: "#999", fontSize: 10, letterSpacing: 1, marginBottom: 8 }}>
+      <div style={{ color: "#999", fontSize: 12, letterSpacing: 1, marginBottom: 8 }}>
         ORDERBOOK — {book.market_id?.split("-").slice(-3).join("-")}
       </div>
 

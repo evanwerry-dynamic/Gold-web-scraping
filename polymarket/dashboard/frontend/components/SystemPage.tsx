@@ -12,7 +12,7 @@ const mono  = '"JetBrains Mono", "Fira Code", "Courier New", monospace';
 function H2({ children, color = G }: { children: React.ReactNode; color?: string }) {
   return (
     <div style={{
-      color, fontSize: 9, letterSpacing: "0.22em", textTransform: "uppercase" as const,
+      color, fontSize: 11, letterSpacing: "0.22em", textTransform: "uppercase" as const,
       borderBottom: `1px solid ${color}33`, paddingBottom: 7, marginBottom: 14,
       display: "flex", alignItems: "center", gap: 8,
     }}>
@@ -31,7 +31,7 @@ function Row({ label, val, color = G, note }: { label: string; val: string; colo
       <span style={{ color: "#bbb", fontSize: 11, width: 200, flexShrink: 0 }}>{label}</span>
       <div style={{ flex: 1 }}>
         <span style={{ color, fontSize: 12, fontWeight: 700 }}>{val}</span>
-        {note && <div style={{ color: "#aaa", fontSize: 10, marginTop: 3 }}>{note}</div>}
+        {note && <div style={{ color: "#aaa", fontSize: 12, marginTop: 3 }}>{note}</div>}
       </div>
     </div>
   );
@@ -60,10 +60,10 @@ export function SystemPage() {
   return (
     <div style={{
       flex: 1, overflowY: "auto", padding: "24px 28px",
-      background: "#050505", fontFamily: mono, fontSize: 12, color: G,
+      background: "#0a0a0a", fontFamily: mono, fontSize: 13, color: G,
     }}>
       <div style={{ marginBottom: 28 }}>
-        <div style={{ color: "#222", fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", marginBottom: 4 }}>
+        <div style={{ color: "#aaa", fontSize: 12, letterSpacing: "0.2em", textTransform: "uppercase", marginBottom: 4 }}>
           Mad Scientist · System Documentation
         </div>
         <div style={{ color: G, fontSize: 22, fontWeight: 700 }}>How This Bot Works</div>
@@ -95,7 +95,7 @@ export function SystemPage() {
   calibrator_loop(),            # ← Claude nightly self-improvement
   dashboard_broadcast(oracle),  # ← push state to WebSocket clients
 )`}</Code>
-        <div style={{ color: "#777", fontSize: 10, marginTop: 8 }}>
+        <div style={{ color: "#777", fontSize: 12, marginTop: 8 }}>
           All 12 coroutines share a single <span style={{ color: CYAN }}>OracleBuffer</span> — an in-memory dataclass holding BTC price, active market details, open positions, bankroll, and volatility estimates. Written only by the three feed loops. Read by everything else.
         </div>
       </Block>
@@ -153,7 +153,7 @@ def fair_value_binary(current_price, window_open_price,
     delta = (current_price - window_open_price) / window_open_price
     z     = delta / (sigma_per_second * sqrt(seconds_remaining))
     return norm.cdf(z)  # Probability UP resolves YES`}</Code>
-        <div style={{ color: "#777", fontSize: 10, lineHeight: 1.8, marginTop: 8 }}>
+        <div style={{ color: "#777", fontSize: 12, lineHeight: 1.8, marginTop: 8 }}>
           <div style={{ marginBottom: 6 }}>
             <span style={{ color: GOLD }}>delta</span> — Fractional BTC move since window opened. +0.10% means BTC is 0.10% above where it started this 5-min window.
           </div>
@@ -341,7 +341,7 @@ FILLED    → simulated at ask price at T+0.2s (realistic fill sim)
         <Row label="Cost" val="~$0.05/call on Claude Opus" color={GOLD} note="Requires ANTHROPIC_API_KEY env var in Railway" />
       </Block>
 
-      <div style={{ color: "#111", fontSize: 10, textAlign: "center", paddingBottom: 8 }}>
+      <div style={{ color: "#111", fontSize: 12, textAlign: "center", paddingBottom: 8 }}>
         MAD SCIENTIST v1.0 · EVERY PIECE IS NECESSARY · NONE IS REDUNDANT
       </div>
     </div>

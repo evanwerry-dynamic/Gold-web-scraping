@@ -24,7 +24,7 @@ export function PriceSparkline() {
       layout: {
         background: { color: "#050505" },
         textColor: "#444",
-        fontSize: 10,
+        fontSize: 12,
       },
       grid: {
         vertLines: { color: "#111" },
@@ -105,7 +105,7 @@ export function PriceSparkline() {
           top: 8,
           left: 12,
           color: "#999",
-          fontSize: 10,
+          fontSize: 12,
           letterSpacing: 1,
           zIndex: 1,
           pointerEvents: "none",

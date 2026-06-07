@@ -12,6 +12,17 @@ import { PriceSparkline } from "@/components/PriceSparkline";
 import { PerformanceMatrix } from "@/components/PerformanceMatrix";
 import { SystemHealth } from "@/components/SystemHealth";
 import { VisionPage } from "@/components/VisionPage";
+import { RoadmapPage } from "@/components/RoadmapPage";
+import { SystemPage } from "@/components/SystemPage";
+
+type View = "dashboard" | "vision" | "roadmap" | "system";
+
+const TABS: { id: View; label: string }[] = [
+  { id: "dashboard", label: "▶  Live" },
+  { id: "vision",    label: "◈  Mission" },
+  { id: "roadmap",   label: "◉  Road Map" },
+  { id: "system",    label: "⊞  System" },
+];
 
 const BASE = {
   background: "#050505",
@@ -21,46 +32,57 @@ const BASE = {
 };
 
 export default function Dashboard() {
-  const [view, setView] = useState<"dashboard" | "vision">("dashboard");
+  const [view, setView] = useState<View>("dashboard");
 
   return (
     <div style={{ height: "100vh", display: "flex", flexDirection: "column", ...BASE, overflow: "hidden" }}>
       <WsInit />
       <DemoDataInjector />
 
-      {/* View toggle */}
+      {/* Tab bar */}
       <div style={{
         display: "flex",
-        gap: 1,
-        background: "#0a0a0a",
-        borderBottom: "1px solid #1a1a1a",
+        gap: 2,
+        background: "#080808",
+        borderBottom: "1px solid #151515",
         padding: "4px 8px",
         flexShrink: 0,
+        alignItems: "center",
       }}>
-        {(["dashboard", "vision"] as const).map((v) => (
-          <button
-            key={v}
-            onClick={() => setView(v)}
-            style={{
-              background: view === v ? "#00ff88" : "transparent",
-              color: view === v ? "#050505" : "#00ff8888",
-              border: "1px solid",
-              borderColor: view === v ? "#00ff88" : "#1a1a1a",
-              padding: "3px 14px",
-              fontFamily: "inherit",
-              fontSize: 11,
-              fontWeight: 700,
-              cursor: "pointer",
-              letterSpacing: "0.08em",
-              textTransform: "uppercase",
-            }}
-          >
-            {v === "dashboard" ? "▶ Live" : "◈ Mission"}
-          </button>
-        ))}
+        {TABS.map((t) => {
+          const active = view === t.id;
+          return (
+            <button
+              key={t.id}
+              onClick={() => setView(t.id)}
+              style={{
+                background: active ? "#00ff88" : "transparent",
+                color: active ? "#050505" : "#00ff8866",
+                border: "1px solid",
+                borderColor: active ? "#00ff88" : "#1c1c1c",
+                padding: "3px 16px",
+                fontFamily: "inherit",
+                fontSize: 10,
+                fontWeight: 700,
+                cursor: "pointer",
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                transition: "all 0.1s",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {t.label}
+            </button>
+          );
+        })}
+        <div style={{ flex: 1 }} />
+        <div style={{ color: "#1a1a1a", fontSize: 9, letterSpacing: "0.1em" }}>
+          MAD SCIENTIST v1.0
+        </div>
       </div>
 
-      {view === "dashboard" ? (
+      {/* Views */}
+      {view === "dashboard" && (
         <>
           <PnLHeader />
           <StrategyStatusBar />
@@ -96,9 +118,10 @@ export default function Dashboard() {
             </div>
           </div>
         </>
-      ) : (
-        <VisionPage />
       )}
+      {view === "vision"   && <VisionPage />}
+      {view === "roadmap"  && <RoadmapPage />}
+      {view === "system"   && <SystemPage />}
     </div>
   );
 }

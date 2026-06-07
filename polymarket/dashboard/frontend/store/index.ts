@@ -105,14 +105,7 @@ export const useBookStore = create<{
     set((s) => ({
       book: s.book
         ? { ...s.book, seconds_remaining: data.seconds_remaining }
-        : {
-            market_id: data.market_id,
-            yes_bid: 0,
-            yes_ask: 0,
-            no_bid: 0,
-            no_ask: 0,
-            seconds_remaining: data.seconds_remaining,
-          },
+        : null, // don't initialise with zeros; wait for a real book event
     })),
 }));
 

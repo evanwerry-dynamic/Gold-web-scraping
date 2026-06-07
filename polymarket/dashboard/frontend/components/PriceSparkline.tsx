@@ -32,12 +32,12 @@ export function PriceSparkline() {
       },
       crosshair: { mode: 0 },
       rightPriceScale: {
-        borderColor: "#1a1a1a",
+        borderColor: "#555",
         textColor: "#444",
         scaleMargins: { top: 0.1, bottom: 0.1 },
       },
       timeScale: {
-        borderColor: "#1a1a1a",
+        borderColor: "#555",
         timeVisible: true,
         secondsVisible: false,
       },
@@ -104,7 +104,7 @@ export function PriceSparkline() {
           position: "absolute",
           top: 8,
           left: 12,
-          color: "#555",
+          color: "#999",
           fontSize: 10,
           letterSpacing: 1,
           zIndex: 1,

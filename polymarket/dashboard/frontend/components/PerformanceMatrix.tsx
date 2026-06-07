@@ -15,12 +15,12 @@ export function PerformanceMatrix() {
 
   return (
     <div style={{ padding: 12, fontSize: 11 }}>
-      <div style={{ color: "#555", fontSize: 10, letterSpacing: 1, marginBottom: 8 }}>
+      <div style={{ color: "#999", fontSize: 10, letterSpacing: 1, marginBottom: 8 }}>
         PERFORMANCE MATRIX
       </div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
-          <tr style={{ color: "#444", fontSize: 10 }}>
+          <tr style={{ color: "#888", fontSize: 10 }}>
             <th style={{ textAlign: "left", padding: "2px 4px" }}>LAYER</th>
             <th style={{ textAlign: "right", padding: "2px 4px" }}>TRADES</th>
             <th style={{ textAlign: "right", padding: "2px 4px" }}>WIN%</th>

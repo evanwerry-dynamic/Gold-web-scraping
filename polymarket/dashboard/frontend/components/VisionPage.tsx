@@ -8,7 +8,7 @@ const CORAL      = "#ff6b6b";
 const SAND       = "#f4c97a";
 const SEAFOAM    = "#a7f3e8";
 const SKY        = "#87d7f0";
-const DIM        = "#2a4a5a";
+const DIM        = "#5a8a9a";
 const HORIZON    = "#0a2d40";
 
 const mono = '"JetBrains Mono", "Fira Code", "Courier New", monospace';

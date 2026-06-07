@@ -6,12 +6,12 @@ export function TradeFeed() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <div style={{ color: "#555", fontSize: 10, letterSpacing: 1, padding: "8px 12px 4px" }}>
+      <div style={{ color: "#999", fontSize: 10, letterSpacing: 1, padding: "8px 12px 4px" }}>
         LIVE TRADE FEED
       </div>
       <div className="scroll-panel" style={{ flex: 1, padding: "0 12px" }}>
         {trades.length === 0 && (
-          <div style={{ color: "#333", padding: "8px 0" }}>Waiting for signals...</div>
+          <div style={{ color: "#777", padding: "8px 0" }}>Waiting for signals...</div>
         )}
         {trades.map((t, i) => {
           const pnl = t.pnl ?? 0;
@@ -28,7 +28,7 @@ export function TradeFeed() {
                 fontSize: 11,
               }}
             >
-              <span style={{ color: "#555" }}>[{t.strategy}]</span>
+              <span style={{ color: "#999" }}>[{t.strategy}]</span>
               <span style={{ color: t.side === "UP" ? "#00ff88" : "#ff4466" }}>
                 {t.side}
               </span>

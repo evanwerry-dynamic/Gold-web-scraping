@@ -130,7 +130,7 @@ export function MicrostructureMesh() {
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%" }}>
-      <div style={{ position: "absolute", top: 8, left: 12, color: "#555", fontSize: 10, letterSpacing: 1, zIndex: 1 }}>
+      <div style={{ position: "absolute", top: 8, left: 12, color: "#999", fontSize: 10, letterSpacing: 1, zIndex: 1 }}>
         MICROSTRUCTURE MESH
       </div>
       <canvas ref={canvasRef} style={{ width: "100%", height: "100%", display: "block" }} />

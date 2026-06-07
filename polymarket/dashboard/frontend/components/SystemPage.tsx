@@ -28,10 +28,10 @@ function Block({ children }: { children: React.ReactNode }) {
 function Row({ label, val, color = G, note }: { label: string; val: string; color?: string; note?: string }) {
   return (
     <div style={{ display: "flex", gap: 8, padding: "6px 0", borderBottom: "1px solid #0d0d0d", alignItems: "flex-start" }}>
-      <span style={{ color: "#333", fontSize: 10, width: 190, flexShrink: 0 }}>{label}</span>
+      <span style={{ color: "#777", fontSize: 10, width: 190, flexShrink: 0 }}>{label}</span>
       <div style={{ flex: 1 }}>
         <span style={{ color, fontSize: 11, fontWeight: 700 }}>{val}</span>
-        {note && <div style={{ color: "#2a2a2a", fontSize: 9, marginTop: 2 }}>{note}</div>}
+        {note && <div style={{ color: "#4a4a5a", fontSize: 9, marginTop: 2 }}>{note}</div>}
       </div>
     </div>
   );
@@ -47,7 +47,7 @@ function Code({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Note({ children, color = "#333" }: { children: React.ReactNode; color?: string }) {
+function Note({ children, color = "#777" }: { children: React.ReactNode; color?: string }) {
   return (
     <div style={{
       borderLeft: `2px solid ${color}`, paddingLeft: 10,
@@ -67,7 +67,7 @@ export function SystemPage() {
           Mad Scientist · System Documentation
         </div>
         <div style={{ color: G, fontSize: 22, fontWeight: 700 }}>How This Bot Works</div>
-        <div style={{ color: "#333", fontSize: 11, marginTop: 6 }}>
+        <div style={{ color: "#777", fontSize: 11, marginTop: 6 }}>
           Architecture · Data Feeds · Strategy Logic · Risk System · Edge Explained
         </div>
       </div>
@@ -95,7 +95,7 @@ export function SystemPage() {
   calibrator_loop(),            # ← Claude nightly self-improvement
   dashboard_broadcast(oracle),  # ← push state to WebSocket clients
 )`}</Code>
-        <div style={{ color: "#333", fontSize: 10, marginTop: 8 }}>
+        <div style={{ color: "#777", fontSize: 10, marginTop: 8 }}>
           All 12 coroutines share a single <span style={{ color: CYAN }}>OracleBuffer</span> — an in-memory dataclass holding BTC price, active market details, open positions, bankroll, and volatility estimates. Written only by the three feed loops. Read by everything else.
         </div>
       </Block>
@@ -153,7 +153,7 @@ def fair_value_binary(current_price, window_open_price,
     delta = (current_price - window_open_price) / window_open_price
     z     = delta / (sigma_per_second * sqrt(seconds_remaining))
     return norm.cdf(z)  # Probability UP resolves YES`}</Code>
-        <div style={{ color: "#333", fontSize: 10, lineHeight: 1.8, marginTop: 8 }}>
+        <div style={{ color: "#777", fontSize: 10, lineHeight: 1.8, marginTop: 8 }}>
           <div style={{ marginBottom: 6 }}>
             <span style={{ color: GOLD }}>delta</span> — Fractional BTC move since window opened. +0.10% means BTC is 0.10% above where it started this 5-min window.
           </div>

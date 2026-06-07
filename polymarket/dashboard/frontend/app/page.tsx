@@ -57,7 +57,7 @@ export default function Dashboard() {
               onClick={() => setView(t.id)}
               style={{
                 background: active ? "#00ff88" : "transparent",
-                color: active ? "#050505" : "#00ff8866",
+                color: active ? "#050505" : "#00ff88bb",
                 border: "1px solid",
                 borderColor: active ? "#00ff88" : "#1c1c1c",
                 padding: "3px 16px",
@@ -76,7 +76,7 @@ export default function Dashboard() {
           );
         })}
         <div style={{ flex: 1 }} />
-        <div style={{ color: "#1a1a1a", fontSize: 9, letterSpacing: "0.1em" }}>
+        <div style={{ color: "#999", fontSize: 9, letterSpacing: "0.1em" }}>
           MAD SCIENTIST v1.0
         </div>
       </div>

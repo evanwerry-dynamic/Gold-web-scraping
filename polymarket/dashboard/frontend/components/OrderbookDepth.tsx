@@ -6,8 +6,8 @@ export function OrderbookDepth() {
 
   if (!book) {
     return (
-      <div style={{ padding: 12, color: "#333", fontSize: 11 }}>
-        <div style={{ color: "#555", fontSize: 10, letterSpacing: 1, marginBottom: 8 }}>
+      <div style={{ padding: 12, color: "#777", fontSize: 11 }}>
+        <div style={{ color: "#999", fontSize: 10, letterSpacing: 1, marginBottom: 8 }}>
           ORDERBOOK
         </div>
         Awaiting market data...
@@ -20,7 +20,7 @@ export function OrderbookDepth() {
 
   return (
     <div style={{ padding: 12, fontSize: 11 }}>
-      <div style={{ color: "#555", fontSize: 10, letterSpacing: 1, marginBottom: 8 }}>
+      <div style={{ color: "#999", fontSize: 10, letterSpacing: 1, marginBottom: 8 }}>
         ORDERBOOK — {book.market_id?.split("-").slice(-3).join("-")}
       </div>
 
@@ -45,21 +45,21 @@ export function OrderbookDepth() {
       {/* Stats */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
         <div>
-          <div style={{ color: "#444", fontSize: 10 }}>MID</div>
+          <div style={{ color: "#888", fontSize: 10 }}>MID</div>
           <div style={{ color: "#ccc" }}>{mid}</div>
         </div>
         <div>
-          <div style={{ color: "#444", fontSize: 10 }}>SPREAD</div>
+          <div style={{ color: "#888", fontSize: 10 }}>SPREAD</div>
           <div style={{ color: "#888" }}>{spread}</div>
         </div>
         <div>
-          <div style={{ color: "#444", fontSize: 10 }}>T-REMAINING</div>
+          <div style={{ color: "#888", fontSize: 10 }}>T-REMAINING</div>
           <div style={{ color: book.seconds_remaining < 30 ? "#ff4466" : "#00ff88" }}>
             {book.seconds_remaining.toFixed(0)}s
           </div>
         </div>
         <div>
-          <div style={{ color: "#444", fontSize: 10 }}>NO ASK</div>
+          <div style={{ color: "#888", fontSize: 10 }}>NO ASK</div>
           <div style={{ color: "#888" }}>{book.no_ask.toFixed(3)}</div>
         </div>
       </div>

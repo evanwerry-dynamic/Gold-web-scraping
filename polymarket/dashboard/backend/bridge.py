@@ -4,12 +4,16 @@ Bridge between bot OracleBuffer and dashboard WebSocket clients.
 Runs as an asyncio coroutine alongside the bot. Pushes typed events to all
 connected dashboard browser tabs via the ConnectionManager in main.py.
 """
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
 import time
+from typing import TYPE_CHECKING
 
-from polymarket.oracle_buffer import OracleBuffer
+if TYPE_CHECKING:
+    from polymarket.oracle_buffer import OracleBuffer
 
 log = logging.getLogger(__name__)
 

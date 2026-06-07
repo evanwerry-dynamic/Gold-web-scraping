@@ -14,11 +14,13 @@ import { SystemHealth } from "@/components/SystemHealth";
 import { VisionPage } from "@/components/VisionPage";
 import { RoadmapPage } from "@/components/RoadmapPage";
 import { SystemPage } from "@/components/SystemPage";
+import { TradeHistoryPage } from "@/components/TradeHistoryPage";
 
-type View = "dashboard" | "vision" | "roadmap" | "system";
+type View = "dashboard" | "vision" | "roadmap" | "system" | "history";
 
 const TABS: { id: View; label: string }[] = [
   { id: "dashboard", label: "▶  Live" },
+  { id: "history",   label: "◷  History" },
   { id: "vision",    label: "◈  Mission" },
   { id: "roadmap",   label: "◉  Road Map" },
   { id: "system",    label: "⊞  System" },
@@ -119,6 +121,7 @@ export default function Dashboard() {
           </div>
         </>
       )}
+      {view === "history"  && <TradeHistoryPage />}
       {view === "vision"   && <VisionPage />}
       {view === "roadmap"  && <RoadmapPage />}
       {view === "system"   && <SystemPage />}

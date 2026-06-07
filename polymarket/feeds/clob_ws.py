@@ -78,17 +78,22 @@ def _update_orderbook(oracle: OracleBuffer, msg: dict) -> None:
     if not bids and not asks:
         return
 
-    best_bid = float(bids[-1]["price"]) if bids else 0.0
-    best_ask = float(asks[-1]["price"]) if asks else 1.0
-    depth = sum(float(a["size"]) for a in asks[:3])
+    # Only update each side when data is actually present — never write 0 for missing bids
+    if bids:
+        best_bid = float(bids[-1]["price"])
+        if asset_id == m.yes_token_id:
+            m.yes_bid = best_bid
+        elif asset_id == m.no_token_id:
+            m.no_bid = best_bid
 
-    if asset_id == m.yes_token_id:
-        m.yes_bid = best_bid
-        m.yes_ask = best_ask
-        m.ask_depth = depth
-    elif asset_id == m.no_token_id:
-        m.no_bid = best_bid
-        m.no_ask = best_ask
+    if asks:
+        best_ask = float(asks[-1]["price"])
+        depth = sum(float(a["size"]) for a in asks[:3])
+        if asset_id == m.yes_token_id:
+            m.yes_ask = best_ask
+            m.ask_depth = depth
+        elif asset_id == m.no_token_id:
+            m.no_ask = best_ask
 
 
 def _on_trade(oracle: OracleBuffer, msg: dict) -> None:

@@ -34,40 +34,44 @@ FRESHNESS_TIMEOUT = 10.0  # seconds before fallback activates
 async def binance_ws_loop(oracle: OracleBuffer) -> None:
     """
     Primary feed: Binance 1s BTC/USDT klines.
-    Launches Kraken + CoinGecko fallbacks in parallel — they self-suppress
-    while this feed is healthy.
+    Launches Kraken + CoinGecko fallbacks as managed tasks — cancelled cleanly
+    on exit so _guard restarts don't leak orphaned tasks.
     """
     log.info("BTC price feed starting (Binance primary, Kraken fallback, CoinGecko last resort)")
-    asyncio.ensure_future(_kraken_ws_loop(oracle))
-    asyncio.ensure_future(_coingecko_rest_loop(oracle))
+    kraken_task = asyncio.create_task(_kraken_ws_loop(oracle))
+    coingecko_task = asyncio.create_task(_coingecko_rest_loop(oracle))
 
-    while True:
-        try:
-            async with websockets.connect(
-                BINANCE_WS_URL,
-                ping_interval=20,
-                ping_timeout=10,
-                close_timeout=5,
-            ) as ws:
-                log.info("Binance WS connected — primary price feed active")
-                async for raw in ws:
-                    msg = json.loads(raw)
-                    k = msg.get("k")
-                    if not k:
-                        continue
-                    price = float(k["c"])
-                    oracle.btc_price = price
-                    oracle.vol_estimator.update(price)
-                    oracle.last_binance_ts = time.time()
+    try:
+        while True:
+            try:
+                async with websockets.connect(
+                    BINANCE_WS_URL,
+                    ping_interval=20,
+                    ping_timeout=10,
+                    close_timeout=5,
+                ) as ws:
+                    log.info("Binance WS connected — primary price feed active")
+                    async for raw in ws:
+                        msg = json.loads(raw)
+                        k = msg.get("k")
+                        if not k:
+                            continue
+                        price = float(k["c"])
+                        oracle.btc_price = price
+                        oracle.vol_estimator.update(price)
+                        oracle.last_binance_ts = time.time()
 
-                    if oracle.active_market and not getattr(
-                        oracle.active_market, "window_open_price", None
-                    ):
-                        oracle.active_market.window_open_price = price  # type: ignore[attr-defined]
+                        if oracle.active_market and not getattr(
+                            oracle.active_market, "window_open_price", None
+                        ):
+                            oracle.active_market.window_open_price = price  # type: ignore[attr-defined]
 
-        except Exception as exc:
-            log.warning(f"Binance WS error: {exc!r} — retrying in 5s (Kraken fallback active)")
-            await asyncio.sleep(5)
+            except Exception as exc:
+                log.warning(f"Binance WS error: {exc!r} — retrying in 5s (Kraken fallback active)")
+                await asyncio.sleep(5)
+    finally:
+        kraken_task.cancel()
+        coingecko_task.cancel()
 
 
 async def _kraken_ws_loop(oracle: OracleBuffer) -> None:

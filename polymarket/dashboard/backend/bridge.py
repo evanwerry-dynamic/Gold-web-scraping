@@ -62,17 +62,17 @@ async def _broadcast_pnl(oracle: OracleBuffer) -> None:
 
 async def _broadcast_health(oracle: OracleBuffer) -> None:
     now = time.time()
-    msg = {
-        "type": "health",
-        "data": {
-            "ws_binance": (now - oracle.last_binance_ts) < 15,
-            "ws_clob": (now - oracle.last_clob_ts) < 30,
-            "open_positions": len(oracle.open_positions),
-            "strategy_phase": oracle.strategy_phase,
-            "btc_price": round(oracle.btc_price, 2),
-        },
+    data: dict = {
+        "ws_binance": (now - oracle.last_binance_ts) < 15,
+        "ws_clob": (now - oracle.last_clob_ts) < 30,
+        "open_positions": len(oracle.open_positions),
+        "strategy_phase": oracle.strategy_phase,
     }
-    await _connection_manager.broadcast(json.dumps(msg))
+    # Only include btc_price when the bot has a real price — avoids overwriting
+    # the standalone Kraken feed's price with 0 at startup
+    if oracle.btc_price > 0:
+        data["btc_price"] = round(oracle.btc_price, 2)
+    await _connection_manager.broadcast(json.dumps({"type": "health", "data": data}))
 
 
 async def _broadcast_strategy(oracle: OracleBuffer) -> None:

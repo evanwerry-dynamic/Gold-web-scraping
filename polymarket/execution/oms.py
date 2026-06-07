@@ -104,13 +104,13 @@ async def _paper_fill(
         oracle.strategy_phase = "HOLD"
         return
 
-    # Simulate position
+    # Simulate position — use .get() so partially-formed arb orders don't crash
     pos = OpenPosition(
-        market_id=intent["market_id"],
-        condition_id=intent["condition_id"],
-        token_id=intent["token_id"],
+        market_id=intent.get("market_id") or "unknown",
+        condition_id=intent.get("condition_id") or "unknown",
+        token_id=intent.get("token_id") or intent.get("yes_token_id") or "unknown",
         side=intent.get("side", "YES"),
-        shares=shares,
+        shares=shares or (dollar_size / max(fill_price, 0.01)),
         cost_basis=dollar_size,
     )
     oracle.open_positions[order_id] = pos

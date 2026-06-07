@@ -1,0 +1,38 @@
+name: Enable GitHub Pages (branch deploy)
+on:
+  workflow_dispatch:
+
+permissions:
+  pages: write
+  contents: read
+
+jobs:
+  enable:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enable Pages from gh-pages branch
+        run: |
+          HTTP=$(curl -s -o /tmp/pages_resp.json -w "%{http_code}" \
+            -X POST \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/pages" \
+            -d '{"build_type":"legacy","source":{"branch":"gh-pages","path":"/"}}')
+          cat /tmp/pages_resp.json
+          echo "HTTP: $HTTP"
+          # 201 = created, 409 = already exists (both OK)
+          if [[ "$HTTP" == "201" || "$HTTP" == "409" ]]; then
+            echo "Pages enabled successfully (or was already on)"
+          else
+            # Try PATCH in case it already exists with wrong source
+            HTTP2=$(curl -s -o /tmp/pages_patch.json -w "%{http_code}" \
+              -X PUT \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/pages" \
+              -d '{"source":{"branch":"gh-pages","path":"/"}}')
+            cat /tmp/pages_patch.json
+            echo "PATCH HTTP: $HTTP2"
+          fi

@@ -41,6 +41,7 @@ async def chainlink_rtds_loop(oracle: OracleBuffer) -> None:
                     or oracle.active_market.market_id != market.market_id
                 ):
                     log.info(f"New window: {market.market_id} ends {market.window_end_ts}")
+                    _resolve_previous_window(oracle)
                     market.window_open_price = oracle.btc_price
                     oracle.active_market = market
             elif oracle.paper_trading:
@@ -51,6 +52,7 @@ async def chainlink_rtds_loop(oracle: OracleBuffer) -> None:
                     or oracle.active_market.market_id != market.market_id
                 ):
                     log.info(f"Paper window: {market.market_id} (synthetic)")
+                    _resolve_previous_window(oracle)
                     oracle.active_market = market
         except Exception as exc:
             log.warning(f"Gamma API error: {exc!r}")
@@ -60,6 +62,39 @@ async def chainlink_rtds_loop(oracle: OracleBuffer) -> None:
                     oracle.active_market = market
 
         await asyncio.sleep(POLL_INTERVAL)
+
+
+def _resolve_previous_window(oracle: OracleBuffer) -> None:
+    """Mark open positions from the expiring window as resolved.
+
+    Called the moment a new window is detected. Uses the current BTC price
+    as the settlement price — valid because chainlink_rtds polls every 30s
+    and windows are 300s, so we're within seconds of actual close.
+    """
+    prev = oracle.active_market
+    if prev is None:
+        return
+
+    final_price = oracle.btc_price
+    open_price  = prev.window_open_price or final_price
+    btc_went_up = final_price >= open_price  # ties go to UP (consistent with Polymarket)
+
+    resolved_count = 0
+    for pos in oracle.open_positions.values():
+        if pos.resolved or pos.market_id != prev.market_id:
+            continue
+        won = (pos.side in ("UP", "YES")) == btc_went_up
+        pos.resolution = 1.0 if won else 0.0
+        pos.resolved   = True
+        resolved_count += 1
+        outcome = "WON" if won else "LOST"
+        log.info(
+            f"[resolve] {pos.market_id} {pos.side} {outcome} "
+            f"(BTC {open_price:.2f}→{final_price:.2f})"
+        )
+
+    if resolved_count:
+        log.info(f"Resolved {resolved_count} position(s) from {prev.market_id}")
 
 
 def _synthetic_paper_market(btc_price: float) -> ActiveMarket:

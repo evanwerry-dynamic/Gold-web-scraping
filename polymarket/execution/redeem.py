@@ -38,6 +38,7 @@ async def redeem_loop(oracle: OracleBuffer) -> None:
                     oracle.bankroll += payout
 
                 pos.redeemed = True
+                final_pnl = payout - pos.cost_basis
                 append_trade({
                     "order_id": order_id,
                     "action": "redeem",
@@ -46,11 +47,27 @@ async def redeem_loop(oracle: OracleBuffer) -> None:
                     "shares": pos.shares,
                     "resolution": pos.resolution,
                     "payout": payout,
-                    "pnl": payout - pos.cost_basis,
+                    "pnl": final_pnl,
+                })
+                # Push updated trade event so the dashboard trade feed
+                # replaces "OPEN" with the final P&L result.
+                import datetime
+                oracle.pending_trade_events.append({
+                    "id": order_id,
+                    "market_id": pos.market_id,
+                    "strategy": "A",
+                    "side": pos.side,
+                    "entry_price": pos.cost_basis / pos.shares if pos.shares > 0 else 0,
+                    "fair_value": 0.0,
+                    "edge": 0.0,
+                    "dollar_size": pos.cost_basis,
+                    "pnl": round(final_pnl, 2),
+                    "paper": True,
+                    "timestamp": datetime.datetime.utcnow().isoformat(),
                 })
                 log.info(
                     f"Redeemed {pos.market_id}: {pos.shares:.2f}sh "
-                    f"→ {payout:.2f} pUSD (pnl={payout - pos.cost_basis:+.2f})"
+                    f"→ {payout:.2f} pUSD (pnl={final_pnl:+.2f})"
                 )
             except Exception as exc:
                 log.error(f"Redemption failed for {pos.market_id}: {exc!r}")

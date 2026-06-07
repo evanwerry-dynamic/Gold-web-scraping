@@ -58,7 +58,10 @@ async def signal_loop(
 
         delta = oracle.window_delta()
         if abs(delta) < MIN_DELTA:
-            continue  # Not enough conviction
+            log.info(
+                f"[A] T-{secs_left:.0f}s: δ={delta:.4%} below threshold {MIN_DELTA:.4%} — skip"
+            )
+            continue
 
         oracle.strategy_phase = "FAIR"
         direction = "UP" if delta > 0 else "DOWN"
@@ -101,7 +104,8 @@ async def signal_loop(
             scale_factor=risk_mgr.position_scale_factor(),
         )
         if sizing["dollar_size"] < 5.0:
-            continue  # Below minimum trade size
+            log.info(f"[A] Size ${sizing['dollar_size']:.2f} below $5 minimum — skip")
+            continue
 
         token_id = market.yes_token_id if direction == "UP" else market.no_token_id
         order = {

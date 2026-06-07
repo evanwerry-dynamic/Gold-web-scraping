@@ -26,7 +26,11 @@ POLL_INTERVAL = 30.0  # seconds
 
 
 async def chainlink_rtds_loop(oracle: OracleBuffer) -> None:
-    """Poll Gamma API for the active BTC 5-min window. Never exits."""
+    """Poll Gamma API for the active BTC 5-min window. Never exits.
+
+    In paper trading mode, falls back to a synthetic time-derived market
+    so signal_loop can fire even without Polymarket connectivity.
+    """
     log.info("Chainlink/Gamma feed starting...")
     while True:
         try:
@@ -37,13 +41,41 @@ async def chainlink_rtds_loop(oracle: OracleBuffer) -> None:
                     or oracle.active_market.market_id != market.market_id
                 ):
                     log.info(f"New window: {market.market_id} ends {market.window_end_ts}")
-                    # Capture window open price from current BTC price
-                    market.window_open_price = oracle.btc_price  # type: ignore[attr-defined]
+                    market.window_open_price = oracle.btc_price
+                    oracle.active_market = market
+            elif oracle.paper_trading:
+                # Paper trading: derive window from system clock — no Polymarket needed
+                market = _synthetic_paper_market(oracle.btc_price)
+                if (
+                    oracle.active_market is None
+                    or oracle.active_market.market_id != market.market_id
+                ):
+                    log.info(f"Paper window: {market.market_id} (synthetic)")
                     oracle.active_market = market
         except Exception as exc:
             log.warning(f"Gamma API error: {exc!r}")
+            if oracle.paper_trading:
+                market = _synthetic_paper_market(oracle.btc_price)
+                if oracle.active_market is None:
+                    oracle.active_market = market
 
         await asyncio.sleep(POLL_INTERVAL)
+
+
+def _synthetic_paper_market(btc_price: float) -> ActiveMarket:
+    """Create a fake market derived from the system clock for paper trading."""
+    now = int(time.time())
+    window_ts = now - (now % 300)
+    market_id = f"paper-btc-5m-{window_ts}"
+    return ActiveMarket(
+        market_id=market_id,
+        condition_id=f"paper-cond-{window_ts}",
+        yes_token_id=f"paper-yes-{window_ts}",
+        no_token_id=f"paper-no-{window_ts}",
+        window_open_ts=float(window_ts),
+        window_end_ts=float(window_ts + 300),
+        window_open_price=btc_price,
+    )
 
 
 def _fetch_active_btc_5m() -> ActiveMarket | None:

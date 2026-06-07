@@ -64,7 +64,7 @@ async def signal_loop(
         direction = "UP" if delta > 0 else "DOWN"
         sigma = oracle.vol_estimator.sigma_per_second()
 
-        open_price = getattr(market, "window_open_price", oracle.btc_price)
+        open_price = market.window_open_price or oracle.btc_price
         fair = fair_value_binary(
             current_price=oracle.btc_price,
             window_open_price=open_price,

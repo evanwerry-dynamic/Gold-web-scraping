@@ -32,10 +32,11 @@ class ActiveMarket:
     no_token_id: str
     window_open_ts: float
     window_end_ts: float
-    yes_ask: float = 0.5
-    no_ask: float = 0.5
-    yes_bid: float = 0.5
-    no_bid: float = 0.5
+    window_open_price: float = 0.0
+    yes_ask: float = 0.85
+    no_ask: float = 0.85
+    yes_bid: float = 0.82
+    no_bid: float = 0.82
     bid_depth: float = 0.0
     ask_depth: float = 0.0
 
@@ -71,7 +72,7 @@ class OracleBuffer:
 
     # WebSocket freshness (last real data message timestamp)
     last_binance_ts: float = field(default_factory=time.time)
-    last_clob_ts: float = field(default_factory=time.time)
+    last_clob_ts: float = 0.0  # stays 0 until CLOB actually sends data
 
     # Strategy state for dashboard
     strategy_phase: str = "SCAN"   # SCAN | FAIR | EDGE | LIMIT | FILL | HOLD

@@ -13,9 +13,31 @@ def _get_conn():
     global _conn
     if _conn is None or getattr(_conn, "closed", 1):
         import psycopg2
-        url = os.getenv("DATABASE_URL", "")
+
+        # Railway exposes the DB URL under several possible names depending on
+        # which plugin version was used. Try them all before giving up.
+        url = (
+            os.getenv("DATABASE_URL")
+            or os.getenv("POSTGRES_URL")
+            or os.getenv("POSTGRESQL_URL")
+        )
+
         if not url:
-            raise RuntimeError("DATABASE_URL not set")
+            # Construct from individual Railway/Postgres env vars
+            host     = os.getenv("PGHOST")     or os.getenv("POSTGRES_HOST", "")
+            port     = os.getenv("PGPORT")     or os.getenv("POSTGRES_PORT", "5432")
+            user     = os.getenv("PGUSER")     or os.getenv("POSTGRES_USER", "")
+            password = os.getenv("PGPASSWORD") or os.getenv("POSTGRES_PASSWORD", "")
+            dbname   = os.getenv("PGDATABASE") or os.getenv("POSTGRES_DB", "")
+            if host and user and dbname:
+                url = f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
+
+        if not url:
+            raise RuntimeError(
+                "No database URL found. Set DATABASE_URL, POSTGRES_URL, "
+                "or PGHOST/PGUSER/PGPASSWORD/PGDATABASE env vars."
+            )
+
         _conn = psycopg2.connect(url, connect_timeout=5)
         _conn.autocommit = True
     return _conn

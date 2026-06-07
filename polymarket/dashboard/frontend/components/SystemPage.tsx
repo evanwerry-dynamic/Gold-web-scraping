@@ -27,11 +27,11 @@ function Block({ children }: { children: React.ReactNode }) {
 
 function Row({ label, val, color = G, note }: { label: string; val: string; color?: string; note?: string }) {
   return (
-    <div style={{ display: "flex", gap: 8, padding: "6px 0", borderBottom: "1px solid #0d0d0d", alignItems: "flex-start" }}>
-      <span style={{ color: "#777", fontSize: 10, width: 190, flexShrink: 0 }}>{label}</span>
+    <div style={{ display: "flex", gap: 8, padding: "8px 0", borderBottom: "1px solid #1a1a1a", alignItems: "flex-start" }}>
+      <span style={{ color: "#bbb", fontSize: 11, width: 200, flexShrink: 0 }}>{label}</span>
       <div style={{ flex: 1 }}>
-        <span style={{ color, fontSize: 11, fontWeight: 700 }}>{val}</span>
-        {note && <div style={{ color: "#4a4a5a", fontSize: 9, marginTop: 2 }}>{note}</div>}
+        <span style={{ color, fontSize: 12, fontWeight: 700 }}>{val}</span>
+        {note && <div style={{ color: "#aaa", fontSize: 10, marginTop: 3 }}>{note}</div>}
       </div>
     </div>
   );
@@ -40,18 +40,18 @@ function Row({ label, val, color = G, note }: { label: string; val: string; colo
 function Code({ children }: { children: React.ReactNode }) {
   return (
     <pre style={{
-      background: "#080808", border: "1px solid #111", padding: "10px 14px",
-      fontSize: 10, color: CYAN, overflowX: "auto", margin: "8px 0",
-      lineHeight: 1.6, fontFamily: mono,
+      background: "#0a0a0a", border: "1px solid #222", padding: "12px 14px",
+      fontSize: 11, color: CYAN, overflowX: "auto", margin: "8px 0",
+      lineHeight: 1.7, fontFamily: mono,
     }}>{children}</pre>
   );
 }
 
-function Note({ children, color = "#777" }: { children: React.ReactNode; color?: string }) {
+function Note({ children, color = "#bbb" }: { children: React.ReactNode; color?: string }) {
   return (
     <div style={{
-      borderLeft: `2px solid ${color}`, paddingLeft: 10,
-      color, fontSize: 10, margin: "8px 0", lineHeight: 1.6,
+      borderLeft: `2px solid ${color}55`, paddingLeft: 10,
+      color, fontSize: 11, margin: "8px 0", lineHeight: 1.6,
     }}>{children}</div>
   );
 }

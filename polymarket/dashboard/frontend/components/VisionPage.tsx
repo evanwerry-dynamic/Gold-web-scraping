@@ -8,7 +8,7 @@ const CORAL      = "#ff6b6b";
 const SAND       = "#f4c97a";
 const SEAFOAM    = "#a7f3e8";
 const SKY        = "#87d7f0";
-const DIM        = "#5a8a9a";
+const DIM        = "#9ad0e0";
 const HORIZON    = "#0a2d40";
 
 const mono = '"JetBrains Mono", "Fira Code", "Courier New", monospace';
@@ -52,10 +52,10 @@ function Row({ label, value, sub, valueColor = TURQ }: {
       padding: "8px 0",
       gap: 12,
     }}>
-      <span style={{ color: DIM, fontSize: 10, flexShrink: 0 }}>{label}</span>
+      <span style={{ color: DIM, fontSize: 12, flexShrink: 0 }}>{label}</span>
       <div style={{ textAlign: "right" }}>
-        <span style={{ color: valueColor, fontSize: 12, fontWeight: 700 }}>{value}</span>
-        {sub && <div style={{ color: DIM, fontSize: 9, marginTop: 1 }}>{sub}</div>}
+        <span style={{ color: valueColor, fontSize: 13, fontWeight: 700 }}>{value}</span>
+        {sub && <div style={{ color: DIM, fontSize: 11, marginTop: 2 }}>{sub}</div>}
       </div>
     </div>
   );

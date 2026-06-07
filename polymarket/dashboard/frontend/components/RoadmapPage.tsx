@@ -49,23 +49,23 @@ function Phase({
           background: `${color}11`, padding: "2px 8px", letterSpacing: "0.12em",
           marginLeft: "auto",
         }}>{badge}</span>
-        <span style={{ color: "#777", fontSize: 10 }}>{eta}</span>
+        <span style={{ color: "#aaa", fontSize: 10 }}>{eta}</span>
       </div>
 
       {/* Env vars to add */}
       {env && env.length > 0 && (
-        <div style={{ background: "#0a0a0a", border: "1px solid #1a1a1a", padding: "10px 14px", marginBottom: 12 }}>
-          <div style={{ color: "#777", fontSize: 9, letterSpacing: "0.15em", marginBottom: 8 }}>
+        <div style={{ background: "#0d0d0d", border: "1px solid #2a2a2a", padding: "10px 14px", marginBottom: 12 }}>
+          <div style={{ color: "#aaa", fontSize: 9, letterSpacing: "0.15em", marginBottom: 8 }}>
             RAILWAY → VARIABLES → ADD:
           </div>
           {env.map(e => (
             <div key={e.key} style={{ marginBottom: 6 }}>
               <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
                 <span style={{ color: CYAN, fontSize: 11 }}>{e.key}</span>
-                <span style={{ color: "#777" }}>=</span>
+                <span style={{ color: "#aaa" }}>=</span>
                 <span style={{ color: GOLD, fontSize: 11 }}>{e.value}</span>
               </div>
-              <div style={{ color: "#777", fontSize: 9, marginLeft: 0, marginTop: 2 }}>{e.note}</div>
+              <div style={{ color: "#bbb", fontSize: 10, marginLeft: 0, marginTop: 2 }}>{e.note}</div>
             </div>
           ))}
         </div>
@@ -75,17 +75,17 @@ function Phase({
       <div style={{ marginBottom: 12 }}>
         {steps.map((s, i) => (
           <div key={i} style={{
-            display: "flex", gap: 10, padding: "5px 0",
-            borderBottom: "1px solid #0f0f0f", alignItems: "flex-start",
+            display: "flex", gap: 10, padding: "7px 0",
+            borderBottom: "1px solid #1a1a1a", alignItems: "flex-start",
           }}>
-            <span style={{ color: color + "88", fontSize: 10, width: 16, flexShrink: 0, marginTop: 1 }}>
+            <span style={{ color, fontSize: 11, width: 16, flexShrink: 0, marginTop: 1 }}>
               {status === "done" ? "✓" : `${i + 1}.`}
             </span>
             <div>
-              <span style={{ color: status === "done" ? "#666" : "#ccc", fontSize: 11, fontWeight: 600 }}>
+              <span style={{ color: status === "done" ? "#999" : "#fff", fontSize: 12, fontWeight: 600 }}>
                 {s.action}
               </span>
-              <div style={{ color: "#777", fontSize: 10, marginTop: 2 }}>{s.detail}</div>
+              <div style={{ color: "#bbb", fontSize: 11, marginTop: 3, lineHeight: 1.5 }}>{s.detail}</div>
             </div>
           </div>
         ))}
@@ -93,8 +93,8 @@ function Phase({
 
       {/* Outcome */}
       <div style={{
-        borderLeft: `2px solid ${color}44`, paddingLeft: 10,
-        color: color + "99", fontSize: 10, fontStyle: "italic",
+        borderLeft: `2px solid ${color}66`, paddingLeft: 10,
+        color: color, fontSize: 11, fontStyle: "italic",
       }}>
         Outcome: {outcome}
       </div>
@@ -109,13 +109,13 @@ export function RoadmapPage() {
       background: "#050505", fontFamily: mono, fontSize: 12, color: G,
     }}>
       <div style={{ marginBottom: 28 }}>
-        <div style={{ color: "#777", fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", marginBottom: 4 }}>
+        <div style={{ color: "#aaa", fontSize: 9, letterSpacing: "0.2em", textTransform: "uppercase", marginBottom: 4 }}>
           Mad Scientist · Deployment Roadmap
         </div>
         <div style={{ color: G, fontSize: 22, fontWeight: 700, letterSpacing: "-0.02em" }}>
           Paper → Real Money in 5 Phases
         </div>
-        <div style={{ color: "#888", fontSize: 11, marginTop: 6 }}>
+        <div style={{ color: "#ccc", fontSize: 11, marginTop: 6 }}>
           Every step is documented. Do them in order. Do not skip.
         </div>
       </div>
@@ -128,15 +128,15 @@ export function RoadmapPage() {
           { n: "4", name: "Live at $500",   s: "pending", time: "after phase 3" },
           { n: "5", name: "$10k Goal",      s: "pending", time: "60 days" },
         ].map(p => {
-          const c = p.s === "done" ? G : p.s === "next" ? GOLD : "#666";
+          const c = p.s === "done" ? G : p.s === "next" ? GOLD : "#aaa";
           return (
             <div key={p.n} style={{
               display: "flex", gap: 12, alignItems: "center",
-              padding: "6px 0", borderBottom: "1px solid #0f0f0f",
+              padding: "8px 0", borderBottom: "1px solid #1a1a1a",
             }}>
-              <span style={{ color: c, fontWeight: 700, width: 14 }}>{p.n}</span>
-              <span style={{ color: c, fontSize: 11, flex: 1 }}>{p.name}</span>
-              <span style={{ color: "#777", fontSize: 10 }}>{p.time}</span>
+              <span style={{ color: c, fontWeight: 700, width: 14, fontSize: 13 }}>{p.n}</span>
+              <span style={{ color: c, fontSize: 12, flex: 1 }}>{p.name}</span>
+              <span style={{ color: "#aaa", fontSize: 11 }}>{p.time}</span>
             </div>
           );
         })}
@@ -227,7 +227,7 @@ export function RoadmapPage() {
             marginBottom: 12, paddingTop: 4, paddingBottom: 4,
           }}>
             <div style={{ color: color as string, fontSize: 11, fontWeight: 700, marginBottom: 3 }}>{risk}</div>
-            <div style={{ color: "#888", fontSize: 10 }}>{fix}</div>
+            <div style={{ color: "#ccc", fontSize: 11 }}>{fix}</div>
           </div>
         ))}
       </Section>

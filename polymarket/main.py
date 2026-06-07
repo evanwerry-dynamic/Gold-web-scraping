@@ -1,13 +1,16 @@
 """
 Mad Scientist — main entry point.
 
-Every coroutine is wrapped in _guard() which catches, logs, and restarts
-on crash. asyncio.gather() never sees a raw exception from a child loop.
+Every coroutine factory is wrapped in _guard() which catches, logs, and
+restarts on crash. A coroutine object can only be awaited once; _guard
+receives a zero-arg callable (lambda) so it can create a fresh coroutine
+on every restart.
 """
 import asyncio
 import logging
 import os
 import sys
+from typing import Callable, Awaitable
 
 from dotenv import load_dotenv
 
@@ -21,12 +24,12 @@ logging.basicConfig(
 log = logging.getLogger("mad_scientist")
 
 
-async def _guard(coro, name: str) -> None:
-    """Run coro forever, restarting after any exception."""
+async def _guard(factory: Callable[[], Awaitable], name: str) -> None:
+    """Call factory() to get a fresh coroutine and run it forever, restarting on crash."""
     while True:
         try:
-            await coro
-            log.warning(f"{name} exited cleanly — restarting")
+            await factory()
+            log.warning(f"{name} exited cleanly — restarting in 5s")
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -64,18 +67,18 @@ async def run() -> None:
     log.info(f"   Positions restored: {len(oracle.open_positions)}")
 
     await asyncio.gather(
-        _guard(binance_ws_loop(oracle),                    "binance_ws"),
-        _guard(clob_ws_loop(oracle),                       "clob_ws"),
-        _guard(chainlink_rtds_loop(oracle),                "chainlink_rtds"),
-        _guard(signal_loop(oracle, order_queue, risk_mgr), "signal_loop"),
-        _guard(maker_loop(oracle, order_queue, risk_mgr),  "maker_loop"),
-        _guard(arb_loop(oracle, order_queue, risk_mgr),    "arb_loop"),
-        _guard(oms_loop(order_queue, oracle, risk_mgr),    "oms_loop"),
-        _guard(redeem_loop(oracle),                        "redeem_loop"),
-        _guard(sanity_loop(oracle),                        "sanity_loop"),
-        _guard(persist_loop(oracle),                       "persist_loop"),
-        _guard(calibrator_loop(),                          "calibrator"),
-        _guard(_dashboard_broadcast(oracle),               "dashboard_broadcast"),
+        _guard(lambda: binance_ws_loop(oracle),                    "binance_ws"),
+        _guard(lambda: clob_ws_loop(oracle),                       "clob_ws"),
+        _guard(lambda: chainlink_rtds_loop(oracle),                "chainlink_rtds"),
+        _guard(lambda: signal_loop(oracle, order_queue, risk_mgr), "signal_loop"),
+        _guard(lambda: maker_loop(oracle, order_queue, risk_mgr),  "maker_loop"),
+        _guard(lambda: arb_loop(oracle, order_queue, risk_mgr),    "arb_loop"),
+        _guard(lambda: oms_loop(order_queue, oracle, risk_mgr),    "oms_loop"),
+        _guard(lambda: redeem_loop(oracle),                        "redeem_loop"),
+        _guard(lambda: sanity_loop(oracle),                        "sanity_loop"),
+        _guard(lambda: persist_loop(oracle),                       "persist_loop"),
+        _guard(lambda: calibrator_loop(),                          "calibrator"),
+        _guard(lambda: _dashboard_broadcast(oracle),               "dashboard_broadcast"),
     )
 
 

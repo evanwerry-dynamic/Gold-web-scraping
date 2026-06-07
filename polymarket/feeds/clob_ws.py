@@ -38,9 +38,9 @@ async def clob_ws_loop(oracle: OracleBuffer) -> None:
                 ping_interval=20,
                 ping_timeout=10,
                 close_timeout=5,
+                additional_headers={"Origin": "https://polymarket.com"},
             ) as ws:
                 subscribe = {
-                    "auth": {},
                     "type": "Market",
                     "assets_ids": [market.yes_token_id, market.no_token_id],
                     "markets": [market.condition_id],

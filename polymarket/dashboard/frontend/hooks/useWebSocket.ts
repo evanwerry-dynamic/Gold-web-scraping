@@ -56,6 +56,9 @@ function connect() {
         case "book":
           useBookStore.getState().update(msg.data as never);
           break;
+        case "tick":
+          useBookStore.getState().tick(msg.data as { market_id: string; seconds_remaining: number });
+          break;
         case "health":
           useHealthStore.getState().update(msg.data as never);
           break;

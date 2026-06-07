@@ -97,15 +97,29 @@ export const usePositionsStore = create<{
 export const useBookStore = create<{
   book: Book | null;
   update: (b: Book) => void;
+  tick: (data: { market_id: string; seconds_remaining: number }) => void;
 }>((set) => ({
   book: null,
   update: (b) => set({ book: b }),
+  tick: (data) =>
+    set((s) => ({
+      book: s.book
+        ? { ...s.book, seconds_remaining: data.seconds_remaining }
+        : {
+            market_id: data.market_id,
+            yes_bid: 0,
+            yes_ask: 0,
+            no_bid: 0,
+            no_ask: 0,
+            seconds_remaining: data.seconds_remaining,
+          },
+    })),
 }));
 
 export const useHealthStore = create<{
   health: Health;
   btcHistory: { time: number; value: number }[];
-  update: (h: Health) => void;
+  update: (h: Partial<Health>) => void;
 }>((set) => ({
   health: {
     ws_binance: false,
@@ -115,14 +129,14 @@ export const useHealthStore = create<{
     btc_price: 0,
   },
   btcHistory: [],
-  update: (h) =>
+  update: (h: Partial<Health>) =>
     set((s) => ({
-      health: h,
+      health: { ...s.health, ...h },
       btcHistory:
-        h.btc_price > 0
+        (h.btc_price ?? 0) > 0
           ? [
               ...s.btcHistory.slice(-300),
-              { time: Math.floor(Date.now() / 1000), value: h.btc_price },
+              { time: Math.floor(Date.now() / 1000), value: h.btc_price! },
             ]
           : s.btcHistory,
     })),

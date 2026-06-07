@@ -10,6 +10,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 
 import websockets
@@ -59,7 +60,7 @@ async def _price_feed(mgr: ConnectionManager) -> None:
     """
     Standalone BTC price broadcaster — runs always, independent of the full bot.
     Uses Kraken WebSocket (never blocked by cloud IPs, no auth needed).
-    Sends health events so the dashboard shows real BTC price and stops demo mode.
+    Sends only ws_binance + btc_price so it doesn't override ws_clob from bridge.
     """
     log.info("Standalone price feed starting (Kraken WS)...")
     while True:
@@ -82,9 +83,6 @@ async def _price_feed(mgr: ConnectionManager) -> None:
                         "type": "health",
                         "data": {
                             "ws_binance": True,
-                            "ws_clob": False,
-                            "open_positions": 0,
-                            "strategy_phase": "SCAN",
                             "btc_price": round(price, 2),
                         }
                     }))
@@ -93,14 +91,39 @@ async def _price_feed(mgr: ConnectionManager) -> None:
             await asyncio.sleep(5)
 
 
+async def _clock_tick(mgr: ConnectionManager) -> None:
+    """Broadcast clock-derived seconds_remaining every second.
+
+    Ensures T-REMAINING always counts down in the dashboard even when the
+    bot's broadcast_loop is down or restarting.
+    """
+    while True:
+        await asyncio.sleep(1.0)
+        now = time.time()
+        window_ts = int(now) - (int(now) % 300)
+        t_remaining = max(0.0, float(window_ts + 300) - now)
+        await mgr.broadcast(json.dumps({
+            "type": "tick",
+            "data": {
+                "market_id": f"btc-updown-5m-{window_ts}",
+                "seconds_remaining": round(t_remaining, 1),
+            }
+        }))
+
+
 async def _run_bot() -> None:
-    """Run the full trading bot. Logs full traceback if it crashes."""
-    try:
-        from polymarket.main import run
-        log.info("Full bot starting...")
-        await run()
-    except Exception as exc:
-        log.error(f"Bot crashed: {exc!r}", exc_info=True)
+    """Run the full trading bot, restarting automatically on crash."""
+    while True:
+        try:
+            from polymarket.main import run
+            log.info("Full bot starting...")
+            await run()
+            log.warning("Bot exited cleanly — restarting in 10s")
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.error(f"Bot crashed: {exc!r}", exc_info=True)
+        await asyncio.sleep(10)
 
 
 @asynccontextmanager
@@ -108,8 +131,9 @@ async def lifespan(app: FastAPI):
     set_connection_manager(manager)
     log.info("Dashboard WebSocket server ready")
 
-    # Always run the price feed — gives real BTC price even if bot fails
+    # Always run price feed and clock tick — work even if bot fails
     price_task = asyncio.create_task(_price_feed(manager))
+    tick_task = asyncio.create_task(_clock_tick(manager))
 
     # Full bot only starts when private key is present
     bot_task = None
@@ -120,6 +144,7 @@ async def lifespan(app: FastAPI):
     yield
 
     price_task.cancel()
+    tick_task.cancel()
     if bot_task and not bot_task.done():
         bot_task.cancel()
     log.info("Dashboard shutting down")

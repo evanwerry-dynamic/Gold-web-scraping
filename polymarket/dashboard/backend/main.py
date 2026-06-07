@@ -90,6 +90,19 @@ app.add_middleware(
 )
 
 
+@app.get("/")
+async def root():
+    return JSONResponse({
+        "service": "Mad Scientist Dashboard",
+        "status": "ok",
+        "endpoints": {
+            "health": "/health",
+            "websocket": "/ws",
+            "dashboard": "https://evanwerry-dynamic.github.io/Gold-web-scraping/",
+        }
+    })
+
+
 @app.get("/health")
 async def health():
     return JSONResponse({"status": "ok", "clients": len(manager._active)})

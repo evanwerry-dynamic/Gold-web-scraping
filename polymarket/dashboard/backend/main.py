@@ -135,17 +135,16 @@ async def lifespan(app: FastAPI):
     price_task = asyncio.create_task(_price_feed(manager))
     tick_task = asyncio.create_task(_clock_tick(manager))
 
-    # Full bot only starts when private key is present
-    bot_task = None
-    if os.getenv("POLYGON_PRIVATE_KEY"):
-        bot_task = asyncio.create_task(_run_bot())
-        log.info("Bot task created")
+    # Always start the bot — paper trading works without a private key.
+    # Live trading additionally requires POLYGON_PRIVATE_KEY (checked inside run()).
+    bot_task = asyncio.create_task(_run_bot())
+    log.info("Bot task created")
 
     yield
 
     price_task.cancel()
     tick_task.cancel()
-    if bot_task and not bot_task.done():
+    if not bot_task.done():
         bot_task.cancel()
     log.info("Dashboard shutting down")
 

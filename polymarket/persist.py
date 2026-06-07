@@ -53,7 +53,11 @@ def restore_state(oracle: OracleBuffer) -> None:
     if not state:
         return
 
-    oracle.bankroll = state.get("bankroll", oracle.bankroll)
+    # Only restore bankroll if it's a positive value — never overwrite
+    # INITIAL_BANKROLL with a zero that got persisted during a crash.
+    saved_bankroll = state.get("bankroll", 0.0)
+    if saved_bankroll > 0:
+        oracle.bankroll = saved_bankroll
     oracle.total_pnl = state.get("total_pnl", 0.0)
     oracle.today_pnl = state.get("today_pnl", 0.0)
 

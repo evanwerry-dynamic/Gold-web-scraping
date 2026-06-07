@@ -17,7 +17,7 @@ export function StrategyStatusBar() {
         alignItems: "center",
       }}
     >
-      <span style={{ color: "#888", fontSize: 12, marginRight: 8 }}>STRATEGY</span>
+      <span style={{ color: "#aaa", fontSize: 12, marginRight: 8 }}>STRATEGY</span>
       {PHASES.map((p, i) => {
         const isActive = p === phase;
         const isPast = PHASES.indexOf(phase as typeof PHASES[number]) > i;
@@ -39,7 +39,7 @@ export function StrategyStatusBar() {
               {p}
             </span>
             {i < PHASES.length - 1 && (
-              <span style={{ color: "#777", fontSize: 10 }}>▶</span>
+              <span style={{ color: "#ccc", fontSize: 10 }}>▶</span>
             )}
           </div>
         );

@@ -15,12 +15,12 @@ export function PerformanceMatrix() {
 
   return (
     <div style={{ padding: 12, fontSize: 11 }}>
-      <div style={{ color: "#999", fontSize: 12, letterSpacing: 1, marginBottom: 8 }}>
+      <div style={{ color: "#bbb", fontSize: 12, letterSpacing: 1, marginBottom: 8 }}>
         PERFORMANCE MATRIX
       </div>
       <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
-          <tr style={{ color: "#888", fontSize: 10 }}>
+          <tr style={{ color: "#aaa", fontSize: 10 }}>
             <th style={{ textAlign: "left", padding: "2px 4px" }}>LAYER</th>
             <th style={{ textAlign: "right", padding: "2px 4px" }}>TRADES</th>
             <th style={{ textAlign: "right", padding: "2px 4px" }}>WIN%</th>
@@ -30,10 +30,10 @@ export function PerformanceMatrix() {
         <tbody>
           {stats.map((row) => (
             <tr key={row.strategy} style={{ borderTop: "1px solid #111" }}>
-              <td style={{ padding: "4px", color: "#888" }}>
+              <td style={{ padding: "4px", color: "#aaa" }}>
                 {row.strategy === "A" ? "Momentum" : row.strategy === "B" ? "Market Make" : "Arbitrage"}
               </td>
-              <td style={{ padding: "4px", textAlign: "right", color: "#aaa" }}>{row.count}</td>
+              <td style={{ padding: "4px", textAlign: "right", color: "#ccc" }}>{row.count}</td>
               <td style={{ padding: "4px", textAlign: "right", color: row.count > 0 && row.wins / row.count >= 0.7 ? "#00ff88" : "#888" }}>
                 {row.count > 0 ? `${((row.wins / row.count) * 100).toFixed(0)}%` : "—"}
               </td>

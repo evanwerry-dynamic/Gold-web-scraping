@@ -15,12 +15,12 @@ export function PnLHeader() {
         gap: 24,
         padding: "8px 16px",
         borderBottom: "1px solid #1e1e1e",
-        background: "#0a0a0a",
+        background: "#111",
       }}
     >
       {/* Main P&L */}
       <div>
-        <span style={{ color: "#999", fontSize: 12, marginRight: 6 }}>TOTAL P&L</span>
+        <span style={{ color: "#bbb", fontSize: 12, marginRight: 6 }}>TOTAL P&L</span>
         <span
           style={{
             fontSize: 28,
@@ -35,7 +35,7 @@ export function PnLHeader() {
 
       {/* Today */}
       <div>
-        <span style={{ color: "#999", fontSize: 12, marginRight: 4 }}>TODAY</span>
+        <span style={{ color: "#bbb", fontSize: 12, marginRight: 4 }}>TODAY</span>
         <span style={{ color: todayColor, fontSize: 14 }}>
           {todaySign}${Math.abs(pnl.today).toFixed(2)}
         </span>
@@ -43,7 +43,7 @@ export function PnLHeader() {
 
       {/* Bankroll */}
       <div>
-        <span style={{ color: "#999", fontSize: 12, marginRight: 4 }}>BANKROLL</span>
+        <span style={{ color: "#bbb", fontSize: 12, marginRight: 4 }}>BANKROLL</span>
         <span style={{ color: "#ccc", fontSize: 14 }}>
           ${pnl.bankroll.toLocaleString("en-US", { minimumFractionDigits: 2 })}
         </span>
@@ -51,7 +51,7 @@ export function PnLHeader() {
 
       {/* Drawdown */}
       <div>
-        <span style={{ color: "#999", fontSize: 12, marginRight: 4 }}>DD</span>
+        <span style={{ color: "#bbb", fontSize: 12, marginRight: 4 }}>DD</span>
         <span style={{ color: pnl.drawdown_pct > 10 ? "#ff4466" : "#888", fontSize: 14 }}>
           {pnl.drawdown_pct.toFixed(1)}%
         </span>
@@ -60,7 +60,7 @@ export function PnLHeader() {
       {/* Live dot */}
       <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
         <span className="live-dot" style={{ width: 6, height: 6, borderRadius: "50%", background: "#00ff88", display: "inline-block" }} />
-        <span style={{ color: "#999", fontSize: 10 }}>LIVE</span>
+        <span style={{ color: "#bbb", fontSize: 10 }}>LIVE</span>
       </div>
     </div>
   );

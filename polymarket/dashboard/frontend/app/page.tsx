@@ -25,7 +25,7 @@ const TABS: { id: View; label: string }[] = [
 ];
 
 const BASE = {
-  background: "#0a0a0a",
+  background: "#111",
   color: "#00ff88",
   fontFamily: '"JetBrains Mono", "Fira Code", "Courier New", monospace',
   fontSize: 13,
@@ -76,7 +76,7 @@ export default function Dashboard() {
           );
         })}
         <div style={{ flex: 1 }} />
-        <div style={{ color: "#999", fontSize: 11, letterSpacing: "0.1em" }}>
+        <div style={{ color: "#bbb", fontSize: 11, letterSpacing: "0.1em" }}>
           MAD SCIENTIST v1.0
         </div>
       </div>
@@ -95,25 +95,25 @@ export default function Dashboard() {
             background: "#111",
             overflow: "hidden",
           }}>
-            <div style={{ background: "#050505", overflow: "hidden", gridColumn: 1, gridRow: 1 }}>
+            <div style={{ background: "#111", overflow: "hidden", gridColumn: 1, gridRow: 1 }}>
               <PositionsPanel />
             </div>
-            <div style={{ background: "#050505", gridColumn: 2, gridRow: "1 / 3", overflow: "hidden" }}>
+            <div style={{ background: "#111", gridColumn: 2, gridRow: "1 / 3", overflow: "hidden" }}>
               <MicrostructureMesh />
             </div>
-            <div style={{ background: "#050505", overflow: "hidden", gridColumn: 3, gridRow: 1 }}>
+            <div style={{ background: "#111", overflow: "hidden", gridColumn: 3, gridRow: 1 }}>
               <OrderbookDepth />
             </div>
-            <div style={{ background: "#050505", overflow: "hidden", gridColumn: 1, gridRow: 2 }}>
+            <div style={{ background: "#111", overflow: "hidden", gridColumn: 1, gridRow: 2 }}>
               <TradeFeed />
             </div>
-            <div style={{ background: "#050505", overflow: "hidden", gridColumn: 3, gridRow: 2 }}>
+            <div style={{ background: "#111", overflow: "hidden", gridColumn: 3, gridRow: 2 }}>
               <PriceSparkline />
             </div>
-            <div style={{ background: "#050505", gridColumn: "1 / 3", gridRow: 3, overflow: "hidden" }}>
+            <div style={{ background: "#111", gridColumn: "1 / 3", gridRow: 3, overflow: "hidden" }}>
               <PerformanceMatrix />
             </div>
-            <div style={{ background: "#050505", overflow: "hidden", gridColumn: 3, gridRow: 3 }}>
+            <div style={{ background: "#111", overflow: "hidden", gridColumn: 3, gridRow: 3 }}>
               <SystemHealth />
             </div>
           </div>

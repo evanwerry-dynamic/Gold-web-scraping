@@ -104,7 +104,7 @@ export function PriceSparkline() {
           position: "absolute",
           top: 8,
           left: 12,
-          color: "#999",
+          color: "#bbb",
           fontSize: 12,
           letterSpacing: 1,
           zIndex: 1,

@@ -12,7 +12,7 @@ const mono  = '"JetBrains Mono", "Fira Code", "Courier New", monospace';
 function H2({ children, color = G }: { children: React.ReactNode; color?: string }) {
   return (
     <div style={{
-      color, fontSize: 11, letterSpacing: "0.22em", textTransform: "uppercase" as const,
+      color, fontSize: 13, letterSpacing: "0.22em", textTransform: "uppercase" as const,
       borderBottom: `1px solid ${color}33`, paddingBottom: 7, marginBottom: 14,
       display: "flex", alignItems: "center", gap: 8,
     }}>
@@ -28,10 +28,10 @@ function Block({ children }: { children: React.ReactNode }) {
 function Row({ label, val, color = G, note }: { label: string; val: string; color?: string; note?: string }) {
   return (
     <div style={{ display: "flex", gap: 8, padding: "8px 0", borderBottom: "1px solid #1a1a1a", alignItems: "flex-start" }}>
-      <span style={{ color: "#bbb", fontSize: 11, width: 200, flexShrink: 0 }}>{label}</span>
+      <span style={{ color: "#ddd", fontSize: 13, width: 200, flexShrink: 0 }}>{label}</span>
       <div style={{ flex: 1 }}>
-        <span style={{ color, fontSize: 12, fontWeight: 700 }}>{val}</span>
-        {note && <div style={{ color: "#aaa", fontSize: 12, marginTop: 3 }}>{note}</div>}
+        <span style={{ color, fontSize: 14, fontWeight: 700 }}>{val}</span>
+        {note && <div style={{ color: "#ccc", fontSize: 14, marginTop: 3 }}>{note}</div>}
       </div>
     </div>
   );
@@ -40,8 +40,8 @@ function Row({ label, val, color = G, note }: { label: string; val: string; colo
 function Code({ children }: { children: React.ReactNode }) {
   return (
     <pre style={{
-      background: "#0a0a0a", border: "1px solid #222", padding: "12px 14px",
-      fontSize: 11, color: CYAN, overflowX: "auto", margin: "8px 0",
+      background: "#111", border: "1px solid #222", padding: "12px 14px",
+      fontSize: 13, color: CYAN, overflowX: "auto", margin: "8px 0",
       lineHeight: 1.7, fontFamily: mono,
     }}>{children}</pre>
   );
@@ -51,7 +51,7 @@ function Note({ children, color = "#bbb" }: { children: React.ReactNode; color?:
   return (
     <div style={{
       borderLeft: `2px solid ${color}55`, paddingLeft: 10,
-      color, fontSize: 11, margin: "8px 0", lineHeight: 1.6,
+      color, fontSize: 13, margin: "8px 0", lineHeight: 1.6,
     }}>{children}</div>
   );
 }
@@ -60,14 +60,14 @@ export function SystemPage() {
   return (
     <div style={{
       flex: 1, overflowY: "auto", padding: "24px 28px",
-      background: "#0a0a0a", fontFamily: mono, fontSize: 13, color: G,
+      background: "#111", fontFamily: mono, fontSize: 13, color: G,
     }}>
       <div style={{ marginBottom: 28 }}>
-        <div style={{ color: "#aaa", fontSize: 12, letterSpacing: "0.2em", textTransform: "uppercase", marginBottom: 4 }}>
+        <div style={{ color: "#ccc", fontSize: 14, letterSpacing: "0.2em", textTransform: "uppercase", marginBottom: 4 }}>
           Mad Scientist · System Documentation
         </div>
         <div style={{ color: G, fontSize: 22, fontWeight: 700 }}>How This Bot Works</div>
-        <div style={{ color: "#777", fontSize: 11, marginTop: 6 }}>
+        <div style={{ color: "#ccc", fontSize: 13, marginTop: 6 }}>
           Architecture · Data Feeds · Strategy Logic · Risk System · Edge Explained
         </div>
       </div>
@@ -95,7 +95,7 @@ export function SystemPage() {
   calibrator_loop(),            # ← Claude nightly self-improvement
   dashboard_broadcast(oracle),  # ← push state to WebSocket clients
 )`}</Code>
-        <div style={{ color: "#777", fontSize: 12, marginTop: 8 }}>
+        <div style={{ color: "#ccc", fontSize: 14, marginTop: 8 }}>
           All 12 coroutines share a single <span style={{ color: CYAN }}>OracleBuffer</span> — an in-memory dataclass holding BTC price, active market details, open positions, bankroll, and volatility estimates. Written only by the three feed loops. Read by everything else.
         </div>
       </Block>
@@ -105,7 +105,7 @@ export function SystemPage() {
         <H2 color={CYAN}>Data Feeds — What the Bot Sees</H2>
 
         <div style={{ marginBottom: 16 }}>
-          <div style={{ color: CYAN, fontSize: 11, fontWeight: 700, marginBottom: 6 }}>1. Binance WebSocket — BTC/USDT 1-Second Candles</div>
+          <div style={{ color: CYAN, fontSize: 13, fontWeight: 700, marginBottom: 6 }}>1. Binance WebSocket — BTC/USDT 1-Second Candles</div>
           <Row label="URL" val="wss://stream.binance.com/ws/btcusdt@kline_1s" color={CYAN} />
           <Row label="What it provides" val="BTC close price every second, zero auth required" />
           <Row label="Reconnect logic" val="Auto-reconnect on any error, 3s backoff" />
@@ -117,7 +117,7 @@ export function SystemPage() {
         </div>
 
         <div style={{ marginBottom: 16 }}>
-          <div style={{ color: CYAN, fontSize: 11, fontWeight: 700, marginBottom: 6 }}>2. Polymarket CLOB WebSocket — Live Orderbook</div>
+          <div style={{ color: CYAN, fontSize: 13, fontWeight: 700, marginBottom: 6 }}>2. Polymarket CLOB WebSocket — Live Orderbook</div>
           <Row label="URL" val="wss://ws-subscriptions-clob.polymarket.com/ws/market" color={CYAN} />
           <Row label="What it provides" val="Real-time best bid/ask for YES and NO tokens" />
           <Row label="Auth required" val="None — public market data feed" />
@@ -127,7 +127,7 @@ export function SystemPage() {
         </div>
 
         <div style={{ marginBottom: 16 }}>
-          <div style={{ color: CYAN, fontSize: 11, fontWeight: 700, marginBottom: 6 }}>3. Gamma API — Window Discovery</div>
+          <div style={{ color: CYAN, fontSize: 13, fontWeight: 700, marginBottom: 6 }}>3. Gamma API — Window Discovery</div>
           <Row label="URL" val="https://gamma-api.polymarket.com/markets" color={CYAN} />
           <Row label="What it provides" val="Current active BTC 5-min Up/Down market metadata" />
           <Row label="Poll interval" val="Every 30 seconds" />
@@ -153,7 +153,7 @@ def fair_value_binary(current_price, window_open_price,
     delta = (current_price - window_open_price) / window_open_price
     z     = delta / (sigma_per_second * sqrt(seconds_remaining))
     return norm.cdf(z)  # Probability UP resolves YES`}</Code>
-        <div style={{ color: "#777", fontSize: 12, lineHeight: 1.8, marginTop: 8 }}>
+        <div style={{ color: "#ccc", fontSize: 14, lineHeight: 1.8, marginTop: 8 }}>
           <div style={{ marginBottom: 6 }}>
             <span style={{ color: GOLD }}>delta</span> — Fractional BTC move since window opened. +0.10% means BTC is 0.10% above where it started this 5-min window.
           </div>
@@ -169,7 +169,7 @@ def fair_value_binary(current_price, window_open_price,
         </div>
 
         <div style={{ marginTop: 12 }}>
-          <div style={{ color: GOLD, fontSize: 11, fontWeight: 700, marginBottom: 6 }}>Dynamic Taker Fee</div>
+          <div style={{ color: GOLD, fontSize: 13, fontWeight: 700, marginBottom: 6 }}>Dynamic Taker Fee</div>
           <Code>{`fee_rate = 0.036 × (1 - |2 × market_price - 1|)
 # At $0.50 entry: fee = 3.60% — edge is destroyed
 # At $0.85 entry: fee = 0.72% — manageable
@@ -341,7 +341,7 @@ FILLED    → simulated at ask price at T+0.2s (realistic fill sim)
         <Row label="Cost" val="~$0.05/call on Claude Opus" color={GOLD} note="Requires ANTHROPIC_API_KEY env var in Railway" />
       </Block>
 
-      <div style={{ color: "#111", fontSize: 12, textAlign: "center", paddingBottom: 8 }}>
+      <div style={{ color: "#111", fontSize: 14, textAlign: "center", paddingBottom: 8 }}>
         MAD SCIENTIST v1.0 · EVERY PIECE IS NECESSARY · NONE IS REDUNDANT
       </div>
     </div>

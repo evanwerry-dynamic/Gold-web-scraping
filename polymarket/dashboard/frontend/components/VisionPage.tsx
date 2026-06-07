@@ -8,14 +8,14 @@ const CORAL      = "#ff6b6b";
 const SAND       = "#f4c97a";
 const SEAFOAM    = "#a7f3e8";
 const SKY        = "#87d7f0";
-const DIM        = "#9ad0e0";
+const DIM        = "#c8eef8";
 const HORIZON    = "#0a2d40";
 
 const mono = '"JetBrains Mono", "Fira Code", "Courier New", monospace';
 
 function Wave() {
   return (
-    <div style={{ color: OCEAN + "44", fontSize: 11, letterSpacing: 2, margin: "10px 0", userSelect: "none" }}>
+    <div style={{ color: OCEAN + "44", fontSize: 13, letterSpacing: 2, margin: "10px 0", userSelect: "none" }}>
       ≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈≈
     </div>
   );
@@ -25,7 +25,7 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
     <div style={{
       color: SKY,
-      fontSize: 11,
+      fontSize: 13,
       letterSpacing: "0.22em",
       textTransform: "uppercase",
       marginBottom: 12,
@@ -52,10 +52,10 @@ function Row({ label, value, sub, valueColor = TURQ }: {
       padding: "8px 0",
       gap: 12,
     }}>
-      <span style={{ color: DIM, fontSize: 12, flexShrink: 0 }}>{label}</span>
+      <span style={{ color: DIM, fontSize: 14, flexShrink: 0 }}>{label}</span>
       <div style={{ textAlign: "right" }}>
         <span style={{ color: valueColor, fontSize: 13, fontWeight: 700 }}>{value}</span>
-        {sub && <div style={{ color: DIM, fontSize: 11, marginTop: 2 }}>{sub}</div>}
+        {sub && <div style={{ color: DIM, fontSize: 13, marginTop: 2 }}>{sub}</div>}
       </div>
     </div>
   );
@@ -100,14 +100,14 @@ export function VisionPage() {
         borderBottom: `1px solid ${OCEAN}22`,
         textAlign: "center",
       }}>
-        <div style={{ color: OCEAN + "88", fontSize: 11, letterSpacing: "0.3em", textTransform: "uppercase", marginBottom: 12 }}>
+        <div style={{ color: OCEAN + "88", fontSize: 13, letterSpacing: "0.3em", textTransform: "uppercase", marginBottom: 12 }}>
           ◆ &nbsp; destination locked &nbsp; ◆
         </div>
 
         {/* ASCII overwater bungalow */}
         <pre style={{
           color: OCEAN + "66",
-          fontSize: 11,
+          fontSize: 13,
           lineHeight: 1.4,
           margin: "0 auto 16px",
           userSelect: "none",
@@ -134,7 +134,7 @@ export function VisionPage() {
         }}>
           $10,000
         </div>
-        <div style={{ color: SKY, fontSize: 12, marginBottom: 4 }}>
+        <div style={{ color: SKY, fontSize: 14, marginBottom: 4 }}>
           Overwater Bungalow · North Malé Atoll
         </div>
         <div style={{ color: DIM, fontSize: 10 }}>
@@ -165,7 +165,7 @@ export function VisionPage() {
           justifyContent: "space-between",
           marginTop: 8,
           color: DIM,
-          fontSize: 12,
+          fontSize: 14,
         }}>
           <span>Remaining: <span style={{ color: OCEAN }}>${remaining.toLocaleString("en-US", { maximumFractionDigits: 0 })}</span></span>
           <span>Need <span style={{ color: CORAL }}>${dailyNeeded}/day</span> · {daysLeft} days</span>
@@ -180,7 +180,7 @@ export function VisionPage() {
         <Row label="Dining · excursions · spa" value="$1,200" valueColor={SEAFOAM} />
         <Row label="Buffer" value="$600" valueColor={DIM} />
         <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 0", borderTop: `1px solid ${OCEAN}44`, marginTop: 4 }}>
-          <span style={{ color: SKY, fontSize: 11, fontWeight: 700 }}>Total target</span>
+          <span style={{ color: SKY, fontSize: 13, fontWeight: 700 }}>Total target</span>
           <span style={{ color: SAND, fontSize: 14, fontWeight: 700 }}>$10,000</span>
         </div>
       </div>
@@ -197,11 +197,11 @@ export function VisionPage() {
         ].map((s) => (
           <div key={s.name} style={{ marginBottom: 16 }}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
-              <span style={{ color: s.color, fontSize: 11, fontWeight: 700 }}>{s.name}</span>
+              <span style={{ color: s.color, fontSize: 13, fontWeight: 700 }}>{s.name}</span>
               <span style={{ color: DIM, fontSize: 10 }}>{s.alloc}%</span>
             </div>
             <ProgressBar pct={s.alloc} color={s.color} />
-            <div style={{ color: DIM, fontSize: 12, marginTop: 4 }}>{s.note}</div>
+            <div style={{ color: DIM, fontSize: 14, marginTop: 4 }}>{s.note}</div>
           </div>
         ))}
       </div>
@@ -226,9 +226,9 @@ export function VisionPage() {
             padding: "7px 0",
             alignItems: "flex-start",
           }}>
-            <span style={{ color: DIM, fontSize: 12, width: 130, flexShrink: 0 }}>{rule}</span>
-            <span style={{ color: CORAL, fontSize: 11, fontWeight: 700, flex: 1 }}>{limit}</span>
-            <span style={{ color: DIM, fontSize: 11, textAlign: "right" }}>{why}</span>
+            <span style={{ color: DIM, fontSize: 14, width: 130, flexShrink: 0 }}>{rule}</span>
+            <span style={{ color: CORAL, fontSize: 13, fontWeight: 700, flex: 1 }}>{limit}</span>
+            <span style={{ color: DIM, fontSize: 13, textAlign: "right" }}>{why}</span>
           </div>
         ))}
       </div>
@@ -265,7 +265,7 @@ export function VisionPage() {
               }}>{p.n}</div>
               <div style={{ flex: 1 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
-                  <span style={{ color, fontSize: 11, fontWeight: 700 }}>{p.name}</span>
+                  <span style={{ color, fontSize: 13, fontWeight: 700 }}>{p.name}</span>
                   <span style={{
                     fontSize: 8,
                     color,
@@ -292,16 +292,16 @@ export function VisionPage() {
           textAlign: "center",
           boxShadow: `inset 0 0 40px ${OCEAN}08`,
         }}>
-          <div style={{ color: OCEAN, fontSize: 11, letterSpacing: "0.25em", textTransform: "uppercase", marginBottom: 10 }}>
+          <div style={{ color: OCEAN, fontSize: 13, letterSpacing: "0.25em", textTransform: "uppercase", marginBottom: 10 }}>
             ≈ &nbsp; win condition &nbsp; ≈
           </div>
-          <div style={{ color: SEAFOAM, fontSize: 12, lineHeight: 1.9 }}>
+          <div style={{ color: SEAFOAM, fontSize: 14, lineHeight: 1.9 }}>
             $10,000 withdrawn to bank.<br />
             <span style={{ color: SKY }}>Flights booked. Villa confirmed.</span><br />
             Turquoise water. Overwater deck.<br />
             <span style={{ color: SAND, fontWeight: 700 }}>The bot paid for all of it.</span>
           </div>
-          <div style={{ marginTop: 14, color: OCEAN + "55", fontSize: 12, letterSpacing: 3 }}>
+          <div style={{ marginTop: 14, color: OCEAN + "55", fontSize: 14, letterSpacing: 3 }}>
             ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈ ≈
           </div>
         </div>

@@ -16,9 +16,9 @@ export function PositionsPanel() {
         flexDirection: "column",
       }}
     >
-      <div style={{ color: "#999", fontSize: 12, letterSpacing: 1, marginBottom: 8 }}>
+      <div style={{ color: "#bbb", fontSize: 12, letterSpacing: 1, marginBottom: 8 }}>
         OPEN POSITIONS
-        <span style={{ color: "#777", marginLeft: 8 }}>{entries.length}</span>
+        <span style={{ color: "#ccc", marginLeft: 8 }}>{entries.length}</span>
       </div>
 
       {entries.length === 0 ? (
@@ -27,7 +27,7 @@ export function PositionsPanel() {
         <div style={{ overflow: "auto", flex: 1 }}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
-              <tr style={{ color: "#888", fontSize: 10 }}>
+              <tr style={{ color: "#aaa", fontSize: 10 }}>
                 <th style={{ textAlign: "left", padding: "2px 4px", fontWeight: 400 }}>MARKET</th>
                 <th style={{ textAlign: "center", padding: "2px 4px", fontWeight: 400 }}>SIDE</th>
                 <th style={{ textAlign: "right", padding: "2px 4px", fontWeight: 400 }}>SH</th>
@@ -43,7 +43,7 @@ export function PositionsPanel() {
                     <td
                       style={{
                         padding: "4px",
-                        color: "#aaa",
+                        color: "#ccc",
                         maxWidth: 70,
                         overflow: "hidden",
                         textOverflow: "ellipsis",
@@ -64,10 +64,10 @@ export function PositionsPanel() {
                     >
                       {pos.side}
                     </td>
-                    <td style={{ padding: "4px", textAlign: "right", color: "#aaa" }}>
+                    <td style={{ padding: "4px", textAlign: "right", color: "#ccc" }}>
                       {pos.shares.toFixed(1)}
                     </td>
-                    <td style={{ padding: "4px", textAlign: "right", color: "#999" }}>
+                    <td style={{ padding: "4px", textAlign: "right", color: "#bbb" }}>
                       ${pos.cost_basis.toFixed(0)}
                     </td>
                     <td

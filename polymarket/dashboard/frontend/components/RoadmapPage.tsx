@@ -15,7 +15,7 @@ function Section({ title, children, color = G }: { title: string; children: Reac
         display: "flex", alignItems: "center", gap: 10, marginBottom: 14,
         borderBottom: `1px solid ${color}33`, paddingBottom: 8,
       }}>
-        <span style={{ color, fontSize: 11, letterSpacing: "0.2em", textTransform: "uppercase" as const }}>
+        <span style={{ color, fontSize: 13, letterSpacing: "0.2em", textTransform: "uppercase" as const }}>
           ◆ {title}
         </span>
       </div>
@@ -31,7 +31,7 @@ function Phase({
   eta: string; env?: { key: string; value: string; note: string }[];
   steps: { action: string; detail: string }[]; outcome: string;
 }) {
-  const color = status === "done" ? G : status === "next" ? GOLD : "#778";
+  const color = status === "done" ? G : status === "next" ? GOLD : "#ccc";
   const badge = status === "done" ? "✓ COMPLETE" : status === "next" ? "▶ DO THIS NOW" : "○ UPCOMING";
   return (
     <div style={{
@@ -49,23 +49,23 @@ function Phase({
           background: `${color}11`, padding: "2px 8px", letterSpacing: "0.12em",
           marginLeft: "auto",
         }}>{badge}</span>
-        <span style={{ color: "#aaa", fontSize: 10 }}>{eta}</span>
+        <span style={{ color: "#ccc", fontSize: 10 }}>{eta}</span>
       </div>
 
       {/* Env vars to add */}
       {env && env.length > 0 && (
         <div style={{ background: "#0d0d0d", border: "1px solid #2a2a2a", padding: "10px 14px", marginBottom: 12 }}>
-          <div style={{ color: "#aaa", fontSize: 11, letterSpacing: "0.15em", marginBottom: 8 }}>
+          <div style={{ color: "#ccc", fontSize: 13, letterSpacing: "0.15em", marginBottom: 8 }}>
             RAILWAY → VARIABLES → ADD:
           </div>
           {env.map(e => (
             <div key={e.key} style={{ marginBottom: 6 }}>
               <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
                 <span style={{ color: CYAN, fontSize: 11 }}>{e.key}</span>
-                <span style={{ color: "#aaa" }}>=</span>
+                <span style={{ color: "#ccc" }}>=</span>
                 <span style={{ color: GOLD, fontSize: 11 }}>{e.value}</span>
               </div>
-              <div style={{ color: "#bbb", fontSize: 12, marginLeft: 0, marginTop: 2 }}>{e.note}</div>
+              <div style={{ color: "#ddd", fontSize: 14, marginLeft: 0, marginTop: 2 }}>{e.note}</div>
             </div>
           ))}
         </div>
@@ -78,14 +78,14 @@ function Phase({
             display: "flex", gap: 10, padding: "7px 0",
             borderBottom: "1px solid #1a1a1a", alignItems: "flex-start",
           }}>
-            <span style={{ color, fontSize: 11, width: 16, flexShrink: 0, marginTop: 1 }}>
+            <span style={{ color, fontSize: 13, width: 16, flexShrink: 0, marginTop: 1 }}>
               {status === "done" ? "✓" : `${i + 1}.`}
             </span>
             <div>
-              <span style={{ color: status === "done" ? "#999" : "#fff", fontSize: 12, fontWeight: 600 }}>
+              <span style={{ color: status === "done" ? "#999" : "#fff", fontSize: 14, fontWeight: 600 }}>
                 {s.action}
               </span>
-              <div style={{ color: "#bbb", fontSize: 11, marginTop: 3, lineHeight: 1.5 }}>{s.detail}</div>
+              <div style={{ color: "#ddd", fontSize: 13, marginTop: 3, lineHeight: 1.5 }}>{s.detail}</div>
             </div>
           </div>
         ))}
@@ -94,7 +94,7 @@ function Phase({
       {/* Outcome */}
       <div style={{
         borderLeft: `2px solid ${color}66`, paddingLeft: 10,
-        color: color, fontSize: 11, fontStyle: "italic",
+        color: color, fontSize: 13, fontStyle: "italic",
       }}>
         Outcome: {outcome}
       </div>
@@ -106,16 +106,16 @@ export function RoadmapPage() {
   return (
     <div style={{
       flex: 1, overflowY: "auto", padding: "24px 28px",
-      background: "#0a0a0a", fontFamily: mono, fontSize: 13, color: G,
+      background: "#111", fontFamily: mono, fontSize: 13, color: G,
     }}>
       <div style={{ marginBottom: 28 }}>
-        <div style={{ color: "#aaa", fontSize: 11, letterSpacing: "0.2em", textTransform: "uppercase", marginBottom: 4 }}>
+        <div style={{ color: "#ccc", fontSize: 13, letterSpacing: "0.2em", textTransform: "uppercase", marginBottom: 4 }}>
           Mad Scientist · Deployment Roadmap
         </div>
         <div style={{ color: G, fontSize: 22, fontWeight: 700, letterSpacing: "-0.02em" }}>
           Paper → Real Money in 5 Phases
         </div>
-        <div style={{ color: "#ccc", fontSize: 11, marginTop: 6 }}>
+        <div style={{ color: "#ccc", fontSize: 13, marginTop: 6 }}>
           Every step is documented. Do them in order. Do not skip.
         </div>
       </div>
@@ -135,8 +135,8 @@ export function RoadmapPage() {
               padding: "8px 0", borderBottom: "1px solid #1a1a1a",
             }}>
               <span style={{ color: c, fontWeight: 700, width: 14, fontSize: 13 }}>{p.n}</span>
-              <span style={{ color: c, fontSize: 12, flex: 1 }}>{p.name}</span>
-              <span style={{ color: "#aaa", fontSize: 11 }}>{p.time}</span>
+              <span style={{ color: c, fontSize: 14, flex: 1 }}>{p.name}</span>
+              <span style={{ color: "#ccc", fontSize: 11 }}>{p.time}</span>
             </div>
           );
         })}
@@ -226,13 +226,13 @@ export function RoadmapPage() {
             borderLeft: `2px solid ${color as string}44`, paddingLeft: 12,
             marginBottom: 12, paddingTop: 4, paddingBottom: 4,
           }}>
-            <div style={{ color: color as string, fontSize: 11, fontWeight: 700, marginBottom: 3 }}>{risk}</div>
+            <div style={{ color: color as string, fontSize: 13, fontWeight: 700, marginBottom: 3 }}>{risk}</div>
             <div style={{ color: "#ccc", fontSize: 11 }}>{fix}</div>
           </div>
         ))}
       </Section>
 
-      <div style={{ color: "#999", fontSize: 12, textAlign: "center", paddingBottom: 8 }}>
+      <div style={{ color: "#bbb", fontSize: 14, textAlign: "center", paddingBottom: 8 }}>
         MAD SCIENTIST v1.0 · FOLLOW THE PHASES · DO NOT SKIP STEPS
       </div>
     </div>

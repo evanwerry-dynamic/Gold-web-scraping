@@ -119,7 +119,7 @@ def _scan_monotonicity(markets: list[dict]) -> list[dict]:
         lo = btc_markets[i]
         hi = btc_markets[i + 1]
         spread = hi["yes_price"] - lo["yes_price"]
-        if spread > MIN_MONOTONICITY_SPREAD:
+        if spread < -MIN_MONOTONICITY_SPREAD:  # hi strike has HIGHER yes_price — violation
             violations.append({
                 "action": "monotonicity_arb",
                 # OMS required fields (YES leg at lower strike is primary)

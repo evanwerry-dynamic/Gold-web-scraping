@@ -95,14 +95,16 @@ def _update_orderbook(oracle: OracleBuffer, msg: dict) -> None:
 
     # Only update each side when data is actually present — never write 0 for missing bids
     if bids:
-        best_bid = float(bids[-1]["price"])
+        # Polymarket CLOB returns bids sorted descending (best bid first)
+        best_bid = float(bids[0]["price"])
         if asset_id == m.yes_token_id:
             m.yes_bid = best_bid
         elif asset_id == m.no_token_id:
             m.no_bid = best_bid
 
     if asks:
-        best_ask = float(asks[-1]["price"])
+        # Polymarket CLOB returns asks sorted ascending (best ask first)
+        best_ask = float(asks[0]["price"])
         depth = sum(float(a["size"]) for a in asks[:3])
         if asset_id == m.yes_token_id:
             m.yes_ask = best_ask

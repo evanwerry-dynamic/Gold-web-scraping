@@ -31,6 +31,7 @@ def fair_value_binary(
     if seconds_remaining <= 0:
         return 1.0 if current_price > window_open_price else 0.0
 
+    seconds_remaining = max(seconds_remaining, 0.01)  # prevent div-by-zero at T=0
     delta = (current_price - window_open_price) / window_open_price
 
     if sigma_per_second <= 0:

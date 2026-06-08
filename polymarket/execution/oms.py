@@ -184,7 +184,7 @@ async def _submit_to_clob(intent: dict, order_id: str) -> dict:
         else:
             args = LimitOrderArgs(
                 price=intent["price"],
-                size=intent.get("shares", intent["dollar_size"] / max(intent["price"], 0.001)),
+                size=intent.get("shares", intent["dollar_size"] / max(intent["price"], 0.01)),
                 token_id=token_id,
             )
             signed = await loop.run_in_executor(None, client.create_order, args)

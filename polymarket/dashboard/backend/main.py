@@ -2,23 +2,28 @@
 Mad Scientist Dashboard — FastAPI WebSocket server.
 
 Serves:
-- GET  /         → Service info JSON
-- GET  /health   → JSON health check
-- WS   /ws       → Live dashboard event stream (broadcast to all tabs)
+- GET  /health → JSON health check
+- WS   /ws     → Live dashboard event stream (broadcast to all tabs)
+- GET  /*      → Next.js dashboard (static export, built into frontend/out)
 """
 import asyncio
 import json
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from polymarket.dashboard.backend.bridge import set_connection_manager
 
 log = logging.getLogger(__name__)
+
+_HERE = os.path.dirname(os.path.abspath(__file__))
+FRONTEND_DIR = os.path.normpath(os.path.join(_HERE, "..", "frontend", "out"))
 
 
 class ConnectionManager:
@@ -53,11 +58,7 @@ manager = ConnectionManager()
 
 
 async def _clock_tick(mgr: ConnectionManager) -> None:
-    """Broadcast clock-derived seconds_remaining every second.
-
-    Ensures T-REMAINING always counts down in the dashboard even when the
-    bot's broadcast_loop is down or restarting.
-    """
+    """Broadcast clock-derived seconds_remaining every second."""
     while True:
         await asyncio.sleep(1.0)
         now = time.time()
@@ -93,9 +94,6 @@ async def lifespan(app: FastAPI):
     log.info("Dashboard WebSocket server ready")
 
     tick_task = asyncio.create_task(_clock_tick(manager))
-
-    # Always start the bot — paper trading works without a private key.
-    # Live trading additionally requires POLYGON_PRIVATE_KEY (checked inside run()).
     bot_task = asyncio.create_task(_run_bot())
     log.info("Bot task created")
 
@@ -118,19 +116,6 @@ app.add_middleware(
 )
 
 
-@app.get("/")
-async def root():
-    return JSONResponse({
-        "service": "Mad Scientist Dashboard",
-        "status": "ok",
-        "endpoints": {
-            "health": "/health",
-            "websocket": "/ws",
-            "dashboard": "https://evanwerry-dynamic.github.io/Gold-web-scraping/",
-        }
-    })
-
-
 @app.get("/health")
 async def health():
     return JSONResponse({"status": "ok", "clients": len(manager._active)})
@@ -143,7 +128,7 @@ async def websocket_endpoint(ws: WebSocket):
         # Replay recent trade history so the feed populates immediately on connect
         try:
             from polymarket.data import load_trade_history
-            recent = load_trade_history(days=1)[-50:]  # Last 50 trades, max 1 day
+            recent = load_trade_history(days=1)[-50:]
             for t in recent:
                 await ws.send_text(json.dumps({
                     "type": "trade",
@@ -165,7 +150,7 @@ async def websocket_endpoint(ws: WebSocket):
             log.debug(f"Trade history replay failed: {exc!r}")
 
         while True:
-            # Send a ping every 15s to keep Railway's proxy from killing idle connections
+            # Ping every 15s to keep Railway's proxy from killing idle connections
             try:
                 await asyncio.wait_for(ws.receive_text(), timeout=15.0)
             except asyncio.TimeoutError:
@@ -175,3 +160,12 @@ async def websocket_endpoint(ws: WebSocket):
     except Exception as exc:
         log.debug(f"WS error: {exc!r}")
         manager.disconnect(ws)
+
+
+# Serve the Next.js static export — MUST come after all explicit routes
+# so /health and /ws take priority over the catch-all file handler.
+if os.path.isdir(FRONTEND_DIR):
+    app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+    log.info(f"Serving frontend from {FRONTEND_DIR}")
+else:
+    log.warning(f"Frontend not built — {FRONTEND_DIR} not found. Run: npm run build in frontend/")

@@ -128,7 +128,7 @@ async def websocket_endpoint(ws: WebSocket):
         # Replay recent trade history so the feed populates immediately on connect
         try:
             from polymarket.data import load_trade_history
-            recent = load_trade_history(days=1)[-50:]
+            recent = load_trade_history()[-200:]  # All-time last 200 (matches store max)
             for t in recent:
                 await ws.send_text(json.dumps({
                     "type": "trade",

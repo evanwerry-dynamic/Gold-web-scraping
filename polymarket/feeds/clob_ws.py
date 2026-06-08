@@ -33,6 +33,13 @@ async def clob_ws_loop(oracle: OracleBuffer) -> None:
             await asyncio.sleep(2)
             continue
 
+        # Paper markets have synthetic token IDs — no real CLOB subscription possible.
+        # Keep the indicator green and skip the connection attempt.
+        if market.yes_token_id.startswith("paper-"):
+            oracle.last_clob_ts = time.time()
+            await asyncio.sleep(10)
+            continue
+
         try:
             async with websockets.connect(
                 CLOB_WS_URL,

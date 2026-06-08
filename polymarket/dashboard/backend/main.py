@@ -9,11 +9,9 @@ Serves:
 import asyncio
 import json
 import logging
-import os
 import time
 from contextlib import asynccontextmanager
 
-import websockets
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -21,8 +19,6 @@ from fastapi.responses import JSONResponse
 from polymarket.dashboard.backend.bridge import set_connection_manager
 
 log = logging.getLogger(__name__)
-
-KRAKEN_WS_URL = "wss://ws.kraken.com/v2"
 
 
 class ConnectionManager:
@@ -54,45 +50,6 @@ class ConnectionManager:
 
 
 manager = ConnectionManager()
-
-
-async def _price_feed(mgr: ConnectionManager) -> None:
-    """
-    Standalone BTC price broadcaster — runs always, independent of the full bot.
-    Uses Kraken WebSocket (never blocked by cloud IPs, no auth needed).
-    Sends only ws_binance + btc_price so it doesn't override ws_clob from bridge.
-    """
-    log.info("Standalone price feed starting (Kraken WS)...")
-    while True:
-        try:
-            async with websockets.connect(KRAKEN_WS_URL, ping_interval=20) as ws:
-                await ws.send(json.dumps({
-                    "method": "subscribe",
-                    "params": {"channel": "ticker", "symbol": ["BTC/USD"]}
-                }))
-                log.info("Kraken WS connected — real BTC price active")
-                async for raw in ws:
-                    msg = json.loads(raw)
-                    if msg.get("channel") != "ticker" or msg.get("type") != "update":
-                        continue
-                    data = msg.get("data", [{}])[0]
-                    price = float(data.get("last", 0))
-                    if price <= 0:
-                        continue
-                    await mgr.broadcast(json.dumps({
-                        "type": "health",
-                        "data": {
-                            "ws_binance": True,
-                            "btc_price": round(price, 2),
-                        }
-                    }))
-        except Exception as exc:
-            log.warning(f"Price feed error: {exc!r} — retrying in 5s")
-            try:
-                await mgr.broadcast(json.dumps({"type": "health", "data": {"ws_binance": False}}))
-            except Exception:
-                pass
-            await asyncio.sleep(5)
 
 
 async def _clock_tick(mgr: ConnectionManager) -> None:
@@ -135,8 +92,6 @@ async def lifespan(app: FastAPI):
     set_connection_manager(manager)
     log.info("Dashboard WebSocket server ready")
 
-    # Always run price feed and clock tick — work even if bot fails
-    price_task = asyncio.create_task(_price_feed(manager))
     tick_task = asyncio.create_task(_clock_tick(manager))
 
     # Always start the bot — paper trading works without a private key.
@@ -146,7 +101,6 @@ async def lifespan(app: FastAPI):
 
     yield
 
-    price_task.cancel()
     tick_task.cancel()
     if not bot_task.done():
         bot_task.cancel()

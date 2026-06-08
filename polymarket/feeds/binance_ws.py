@@ -148,7 +148,7 @@ async def _coingecko_rest_loop(oracle: OracleBuffer) -> None:
         if time.time() - oracle.last_binance_ts < KRAKEN_GRACE:
             continue
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             resp = await loop.run_in_executor(
                 None,
                 lambda: requests.get(COINGECKO_URL, timeout=5).json()

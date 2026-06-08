@@ -65,8 +65,6 @@ async def _broadcast_pnl(oracle: OracleBuffer) -> None:
 async def _broadcast_health(oracle: OracleBuffer) -> None:
     now = time.time()
     data: dict = {
-        # Drive ws_binance from oracle.last_binance_ts — authoritative regardless
-        # of whether _price_feed's standalone Kraken connection works on Railway
         "ws_binance": (now - oracle.last_binance_ts) < 45,
         "ws_clob": (now - oracle.last_clob_ts) < 60,
         "open_positions": len(oracle.open_positions),

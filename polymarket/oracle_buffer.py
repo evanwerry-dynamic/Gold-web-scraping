@@ -73,7 +73,7 @@ class OracleBuffer:
 
     # WebSocket freshness (last real data message timestamp)
     last_binance_ts: float = field(default_factory=time.time)
-    last_clob_ts: float = 0.0  # stays 0 until CLOB actually sends data
+    last_clob_ts: float = field(default_factory=time.time)
 
     # Strategy state for dashboard
     strategy_phase: str = "SCAN"   # SCAN | FAIR | EDGE | LIMIT | FILL | HOLD

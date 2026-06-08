@@ -32,15 +32,17 @@ async def chainlink_rtds_loop(oracle: OracleBuffer) -> None:
     so signal_loop can fire even without Polymarket connectivity.
     """
     log.info("Chainlink/Gamma feed starting...")
+    loop = asyncio.get_event_loop()
     while True:
         # Time-based forced resolution: if the active window has expired and
         # still has unresolved positions, resolve immediately without waiting
         # for the Gamma API to publish the next window. This is the primary
         # resolution path — Gamma publication lag can be 30-90s.
-        _resolve_expired_window(oracle)
+        await _resolve_expired_window(oracle, loop)
 
         try:
-            market = _fetch_active_btc_5m()
+            # Run blocking HTTP call in thread pool — never block the event loop
+            market = await loop.run_in_executor(None, _fetch_active_btc_5m)
             if market:
                 if (
                     oracle.active_market is None
@@ -81,7 +83,7 @@ async def chainlink_rtds_loop(oracle: OracleBuffer) -> None:
         await asyncio.sleep(POLL_INTERVAL)
 
 
-def _resolve_expired_window(oracle: OracleBuffer) -> None:
+async def _resolve_expired_window(oracle: OracleBuffer, loop) -> None:
     """Force-resolve positions from expired windows without waiting for a new one.
 
     Handles two cases every poll cycle:
@@ -100,7 +102,7 @@ def _resolve_expired_window(oracle: OracleBuffer) -> None:
         if not pos.resolved and pos.market_id != active_id
     }
     for mid in orphaned_market_ids:
-        _resolve_market_positions(oracle, mid)
+        await _resolve_market_positions(oracle, mid, loop)
 
     # Case 2: current active market has expired but no new market detected yet
     m = oracle.active_market
@@ -121,14 +123,14 @@ def _resolve_expired_window(oracle: OracleBuffer) -> None:
     _resolve_previous_window(oracle)
 
 
-def _resolve_market_positions(oracle: OracleBuffer, market_id: str) -> None:
+async def _resolve_market_positions(oracle: OracleBuffer, market_id: str, loop) -> None:
     """Resolve all unresolved positions for a specific expired market_id.
 
     Queries Gamma API for the actual outcome. Falls back to window_open_price
     stored on the position if available, then to LOST (conservative) if neither
     source can determine the outcome.
     """
-    outcome = _fetch_market_outcome(market_id)
+    outcome = await loop.run_in_executor(None, _fetch_market_outcome, market_id)
 
     for pos in oracle.open_positions.values():
         if pos.resolved or pos.market_id != market_id:

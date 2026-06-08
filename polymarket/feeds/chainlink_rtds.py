@@ -33,6 +33,12 @@ async def chainlink_rtds_loop(oracle: OracleBuffer) -> None:
     """
     log.info("Chainlink/Gamma feed starting...")
     while True:
+        # Time-based forced resolution: if the active window has expired and
+        # still has unresolved positions, resolve immediately without waiting
+        # for the Gamma API to publish the next window. This is the primary
+        # resolution path — Gamma publication lag can be 30-90s.
+        _resolve_expired_window(oracle)
+
         try:
             market = _fetch_active_btc_5m()
             if market:
@@ -73,6 +79,31 @@ async def chainlink_rtds_loop(oracle: OracleBuffer) -> None:
                     oracle.active_market = market
 
         await asyncio.sleep(POLL_INTERVAL)
+
+
+def _resolve_expired_window(oracle: OracleBuffer) -> None:
+    """Force-resolve positions from an expired window without waiting for a new one.
+
+    Called every poll cycle. Handles the common case where Gamma API is slow to
+    publish the next window (30-90s lag), which previously left positions stuck as
+    OPEN indefinitely. 5-second grace period lets Chainlink settlement propagate.
+    """
+    m = oracle.active_market
+    if m is None:
+        return
+    if time.time() < m.window_end_ts + 5:
+        return  # Still within grace period
+    unresolved = [
+        pos for pos in oracle.open_positions.values()
+        if not pos.resolved and pos.market_id == m.market_id
+    ]
+    if not unresolved:
+        return
+    log.warning(
+        f"Window {m.market_id} expired {time.time() - m.window_end_ts:.0f}s ago "
+        f"with {len(unresolved)} unresolved position(s) — forcing resolution"
+    )
+    _resolve_previous_window(oracle)
 
 
 def _resolve_previous_window(oracle: OracleBuffer) -> None:

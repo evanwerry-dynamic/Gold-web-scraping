@@ -74,6 +74,8 @@ async def redeem_loop(oracle: OracleBuffer) -> None:
                     "paper": True,
                     "timestamp": datetime.datetime.utcnow().isoformat(),
                 })
+                # Remove from open_positions — redeemed, no longer relevant
+                oracle.open_positions.pop(order_id, None)
                 log.info(
                     f"Redeemed {pos.market_id}: {pos.shares:.2f}sh "
                     f"→ {payout:.2f} pUSD (pnl={final_pnl:+.2f})"

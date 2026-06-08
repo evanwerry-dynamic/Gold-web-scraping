@@ -19,15 +19,26 @@ export function MicrostructureMesh() {
   const animRef = useRef<number>(0);
   const trades = useTradesStore((s) => s.trades);
 
-  // Add new nodes when trades arrive
+  const lastTradeIdRef = useRef<string | null>(null);
+
+  // Add new nodes only when a brand-new trade id arrives; update color on resolution
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || trades.length === 0) return;
     const latest = trades[0];
+    // pnl update for existing trade — recolor its node
+    if (latest.id === lastTradeIdRef.current) {
+      if (latest.pnl !== null) {
+        const node = nodesRef.current.find((n) => n.id === latest.id);
+        if (node) node.color = latest.pnl >= 0 ? "#00ff88" : "#ff4466";
+      }
+      return;
+    }
+    lastTradeIdRef.current = latest.id;
     const pnl = latest.pnl ?? 0;
     nodesRef.current = [
       {
-        id: `${Date.now()}`,
+        id: latest.id,
         x: Math.random() * canvas.width,
         y: Math.random() * canvas.height,
         vx: (Math.random() - 0.5) * 1.5,

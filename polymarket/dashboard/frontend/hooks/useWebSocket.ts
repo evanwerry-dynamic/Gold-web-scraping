@@ -76,6 +76,12 @@ function connect() {
     });
   };
 
+  socket.onopen = () => {
+    // Clear stale positions on every (re)connect — bot will re-broadcast
+    // only the positions it currently has open, evicting resolved orphans.
+    usePositionsStore.getState().clear();
+  };
+
   socket.onclose = () => {
     reconnectTimer = setTimeout(connect, 3000);
   };

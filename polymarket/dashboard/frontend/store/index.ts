@@ -101,10 +101,12 @@ export const useTradesStore = create<{
 export const usePositionsStore = create<{
   positions: Record<string, Position>;
   update: (p: Position) => void;
+  clear: () => void;
 }>((set) => ({
   positions: {},
   update: (p) =>
     set((s) => ({ positions: { ...s.positions, [p.market_id]: p } })),
+  clear: () => set({ positions: {} }),
 }));
 
 export const useBookStore = create<{

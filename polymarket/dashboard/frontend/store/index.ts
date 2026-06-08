@@ -82,7 +82,20 @@ export const useTradesStore = create<{
 }>((set) => ({
   trades: [],
   addTrade: (t) =>
-    set((s) => ({ trades: [t, ...s.trades].slice(0, MAX_TRADES) })),
+    set((s) => {
+      const idx = s.trades.findIndex((tr) => tr.id === t.id);
+      if (idx >= 0) {
+        // Resolution event for an existing trade: update pnl only, keep original data
+        if (t.pnl !== null) {
+          const updated = [...s.trades];
+          updated[idx] = { ...updated[idx], pnl: t.pnl };
+          return { trades: updated };
+        }
+        // Duplicate open event — ignore
+        return s;
+      }
+      return { trades: [t, ...s.trades].slice(0, MAX_TRADES) };
+    }),
 }));
 
 export const usePositionsStore = create<{

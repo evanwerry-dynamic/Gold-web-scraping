@@ -71,6 +71,28 @@ async def run() -> None:
         log.warning(f"Bankroll is {oracle.bankroll} after restore — resetting to ${initial_bankroll}")
         oracle.bankroll = initial_bankroll
 
+    # Bootstrap P&L totals from trade history so the dashboard header is
+    # correct after a redeploy (total_pnl is never persisted when it's 0).
+    if oracle.total_pnl == 0:
+        try:
+            from polymarket.data import load_trade_history
+            from datetime import datetime, timezone
+            all_trades = load_trade_history(days=None)
+            today = datetime.now(timezone.utc).date()
+            for t in all_trades:
+                pnl = t.get("pnl")
+                if pnl is not None and t.get("action") == "redeem":
+                    oracle.total_pnl += float(pnl)
+                    try:
+                        if datetime.fromisoformat(t["timestamp"]).date() == today:
+                            oracle.today_pnl += float(pnl)
+                    except Exception:
+                        pass
+            if oracle.total_pnl:
+                log.info(f"P&L bootstrapped from history: total={oracle.total_pnl:.2f}, today={oracle.today_pnl:.2f}")
+        except Exception as exc:
+            log.warning(f"P&L bootstrap failed: {exc!r}")
+
     risk_mgr = RiskManager(bankroll=oracle.bankroll)
     order_queue: asyncio.Queue = asyncio.Queue()
 

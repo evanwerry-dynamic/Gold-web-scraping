@@ -39,25 +39,34 @@ async def redeem_loop(oracle: OracleBuffer) -> None:
 
                 pos.redeemed = True
                 final_pnl = payout - pos.cost_basis
+
+                # Update running P&L totals so the dashboard header is correct
+                oracle.total_pnl += final_pnl
+                oracle.today_pnl += final_pnl
+
+                entry_price = pos.cost_basis / pos.shares if pos.shares > 0 else 0.0
                 append_trade({
                     "order_id": order_id,
                     "action": "redeem",
+                    "strategy": "A",
                     "market_id": pos.market_id,
                     "side": pos.side,
+                    "entry_price": entry_price,
+                    "dollar_size": pos.cost_basis,
                     "shares": pos.shares,
                     "resolution": pos.resolution,
                     "payout": payout,
                     "pnl": final_pnl,
+                    "paper": True,
                 })
-                # Push updated trade event so the dashboard trade feed
-                # replaces "OPEN" with the final P&L result.
+                # Same id as the open event — frontend store upserts (pnl: null → value)
                 import datetime
                 oracle.pending_trade_events.append({
                     "id": order_id,
                     "market_id": pos.market_id,
                     "strategy": "A",
                     "side": pos.side,
-                    "entry_price": pos.cost_basis / pos.shares if pos.shares > 0 else 0,
+                    "entry_price": entry_price,
                     "fair_value": 0.0,
                     "edge": 0.0,
                     "dollar_size": pos.cost_basis,

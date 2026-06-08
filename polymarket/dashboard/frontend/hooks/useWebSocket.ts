@@ -77,9 +77,10 @@ function connect() {
   };
 
   socket.onopen = () => {
-    // Clear stale positions on every (re)connect — bot will re-broadcast
-    // only the positions it currently has open, evicting resolved orphans.
+    // Clear stale state on every (re)connect — bot will re-broadcast current
+    // state. Reset health indicators so stale green never persists across reconnects.
     usePositionsStore.getState().clear();
+    useHealthStore.getState().update({ ws_binance: false, ws_clob: false });
   };
 
   socket.onclose = () => {

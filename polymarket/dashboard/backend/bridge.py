@@ -65,8 +65,9 @@ async def _broadcast_pnl(oracle: OracleBuffer) -> None:
 async def _broadcast_health(oracle: OracleBuffer) -> None:
     now = time.time()
     data: dict = {
-        # ws_binance is owned by the standalone _price_feed in dashboard/backend/main.py
-        # Omitting it here prevents a 1-Hz False from fighting _price_feed's True
+        # Drive ws_binance from oracle.last_binance_ts — authoritative regardless
+        # of whether _price_feed's standalone Kraken connection works on Railway
+        "ws_binance": (now - oracle.last_binance_ts) < 45,
         "ws_clob": (now - oracle.last_clob_ts) < 60,
         "open_positions": len(oracle.open_positions),
         "strategy_phase": oracle.strategy_phase,

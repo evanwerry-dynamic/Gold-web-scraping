@@ -102,20 +102,24 @@ Example: {{"min_delta_threshold": 0.0012, "min_edge_net": 0.06, "entry_seconds_b
 
     try:
         import anthropic
+        import ast
         client = anthropic.Anthropic(api_key=api_key)
-        resp = client.messages.create(
-            model="claude-opus-4-8",
-            max_tokens=300,
-            messages=[{"role": "user", "content": prompt}],
+        loop = asyncio.get_running_loop()
+        # Anthropic SDK is synchronous — run in executor to avoid blocking the event loop
+        resp = await loop.run_in_executor(
+            None,
+            lambda: client.messages.create(
+                model="claude-opus-4-8",
+                max_tokens=300,
+                messages=[{"role": "user", "content": prompt}],
+            ),
         )
         raw = resp.content[0].text.strip()
-        # Safe parse — only allow dict literals
-        import ast
         new_params = ast.literal_eval(raw)
         if isinstance(new_params, dict):
-            state = load_state()
+            state = await loop.run_in_executor(None, load_state)
             state["strategy_params"] = new_params
-            save_state(state)
+            await loop.run_in_executor(None, save_state, state)
             log.info(f"Claude recalibration applied: {new_params}")
         else:
             log.warning(f"Claude returned unexpected format: {raw!r}")

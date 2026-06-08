@@ -136,7 +136,8 @@ async def _paper_fill(
         "paper": True,
     }
     import datetime
-    append_trade(trade_record)
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, append_trade, trade_record)
     # Push to dashboard trade feed
     oracle.pending_trade_events.append({
         "id": order_id,
@@ -241,7 +242,7 @@ async def _track_until_terminal(
                 oracle.open_positions[tracked_id] = pos
                 oracle.bankroll -= dollar_size
 
-                append_trade({
+                live_record = {
                     "order_id": tracked_id,
                     "strategy": intent.get("strategy"),
                     "market_id": intent.get("market_id"),
@@ -252,7 +253,8 @@ async def _track_until_terminal(
                     "shares": shares,
                     "dollar_size": dollar_size,
                     "paper": False,
-                })
+                }
+                await asyncio.get_running_loop().run_in_executor(None, append_trade, live_record)
                 log.info(
                     f"[OMS/live] Filled: {tracked_id} "
                     f"{shares:.2f}sh @ {fill_price:.3f}"

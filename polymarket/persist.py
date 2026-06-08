@@ -41,7 +41,8 @@ async def persist_loop(oracle: OracleBuffer) -> None:
                     for oid, p in oracle.open_positions.items()
                 },
             }
-            save_state(state)
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, save_state, state)
             log.debug(f"State persisted: bankroll={oracle.bankroll:.2f}")
         except Exception as exc:
             log.warning(f"State persist failed: {exc!r}")

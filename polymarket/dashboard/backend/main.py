@@ -88,6 +88,10 @@ async def _price_feed(mgr: ConnectionManager) -> None:
                     }))
         except Exception as exc:
             log.warning(f"Price feed error: {exc!r} — retrying in 5s")
+            try:
+                await mgr.broadcast(json.dumps({"type": "health", "data": {"ws_binance": False}}))
+            except Exception:
+                pass
             await asyncio.sleep(5)
 
 

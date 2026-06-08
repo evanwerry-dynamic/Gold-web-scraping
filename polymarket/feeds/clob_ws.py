@@ -29,6 +29,7 @@ async def clob_ws_loop(oracle: OracleBuffer) -> None:
     while True:
         market = oracle.active_market
         if market is None:
+            oracle.last_clob_ts = time.time()  # stay green while waiting for first market
             await asyncio.sleep(2)
             continue
 

@@ -45,7 +45,7 @@ async def redeem_loop(oracle: OracleBuffer) -> None:
                 oracle.today_pnl += final_pnl
 
                 entry_price = pos.cost_basis / pos.shares if pos.shares > 0 else 0.0
-                append_trade({
+                redeem_record = {
                     "order_id": order_id,
                     "action": "redeem",
                     "strategy": "A",
@@ -58,7 +58,8 @@ async def redeem_loop(oracle: OracleBuffer) -> None:
                     "payout": payout,
                     "pnl": final_pnl,
                     "paper": True,
-                })
+                }
+                await asyncio.get_running_loop().run_in_executor(None, append_trade, redeem_record)
                 # Same id as the open event — frontend store upserts (pnl: null → value)
                 import datetime
                 oracle.pending_trade_events.append({

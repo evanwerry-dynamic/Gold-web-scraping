@@ -79,8 +79,15 @@ async def _kraken_ws_loop(oracle: OracleBuffer) -> None:
     Secondary feed: Kraken per-trade BTC/USD ticks.
     Activates when Binance WS has been silent for FRESHNESS_TIMEOUT seconds.
     Provides sub-second updates — Kraken never blocks cloud provider IPs.
+
+    Vol estimator is throttled to 1 update/second: Kraken sends 10-20 ticks/s
+    and the estimator window (maxlen=30) would fill in 1-3s, measuring
+    microstructure noise instead of 30s realized vol. Throttling keeps it on
+    the same timescale as Binance 1s klines.
     """
     log.info("Kraken WS fallback ready")
+    _last_vol_ts: float = 0.0
+
     while True:
         # Suppress while Binance is healthy
         if time.time() - oracle.last_binance_ts < FRESHNESS_TIMEOUT:
@@ -111,8 +118,14 @@ async def _kraken_ws_loop(oracle: OracleBuffer) -> None:
                         continue
 
                     oracle.btc_price = price
-                    oracle.vol_estimator.update(price)
                     oracle.last_binance_ts = time.time()
+
+                    # Only feed vol estimator once per second — multiple ticks/s
+                    # would fill the 30-sample window in seconds, measuring noise
+                    now = time.time()
+                    if now - _last_vol_ts >= 1.0:
+                        oracle.vol_estimator.update(price)
+                        _last_vol_ts = now
 
                     if oracle.active_market and not getattr(
                         oracle.active_market, "window_open_price", None

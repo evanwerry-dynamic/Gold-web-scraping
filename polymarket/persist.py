@@ -36,6 +36,7 @@ async def persist_loop(oracle: OracleBuffer) -> None:
                         "resolved": p.resolved,
                         "resolution": p.resolution,
                         "redeemed": p.redeemed,
+                        "window_open_price": p.window_open_price,
                     }
                     for oid, p in oracle.open_positions.items()
                 },
@@ -72,6 +73,7 @@ def restore_state(oracle: OracleBuffer) -> None:
             resolved=p.get("resolved", False),
             resolution=p.get("resolution", 0.0),
             redeemed=p.get("redeemed", False),
+            window_open_price=p.get("window_open_price", 0.0),
         )
     log.info(
         f"State restored: bankroll={oracle.bankroll:.2f}, "

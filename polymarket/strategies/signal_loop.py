@@ -122,6 +122,7 @@ async def signal_loop(
             "delta": delta,
             "order_type": "FOK",
             "queued_at": time.time(),
+            "window_open_price": market.window_open_price,
         }
 
         log.info(

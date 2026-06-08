@@ -118,6 +118,7 @@ async def _paper_fill(
         side=intent.get("side", "YES"),
         shares=shares or (dollar_size / max(fill_price, 0.01)),
         cost_basis=dollar_size,
+        window_open_price=intent.get("window_open_price", 0.0),
     )
     oracle.open_positions[order_id] = pos
     oracle.bankroll -= dollar_size

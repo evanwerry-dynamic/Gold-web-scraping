@@ -82,17 +82,32 @@ async def chainlink_rtds_loop(oracle: OracleBuffer) -> None:
 
 
 def _resolve_expired_window(oracle: OracleBuffer) -> None:
-    """Force-resolve positions from an expired window without waiting for a new one.
+    """Force-resolve positions from expired windows without waiting for a new one.
 
-    Called every poll cycle. Handles the common case where Gamma API is slow to
-    publish the next window (30-90s lag), which previously left positions stuck as
-    OPEN indefinitely. 5-second grace period lets Chainlink settlement propagate.
+    Handles two cases every poll cycle:
+    1. Orphaned positions from old markets (e.g. restored after redeploy) whose
+       market_id no longer matches oracle.active_market — resolved via Gamma API
+       outcome or window_open_price fallback.
+    2. Positions from the current active market when window_end_ts has passed by
+       >5s but Gamma hasn't published the next market yet (30-90s publication lag).
     """
+    active_id = oracle.active_market.market_id if oracle.active_market else None
+
+    # Case 1: orphaned positions from any market other than the current one
+    orphaned_market_ids = {
+        pos.market_id
+        for pos in oracle.open_positions.values()
+        if not pos.resolved and pos.market_id != active_id
+    }
+    for mid in orphaned_market_ids:
+        _resolve_market_positions(oracle, mid)
+
+    # Case 2: current active market has expired but no new market detected yet
     m = oracle.active_market
     if m is None:
         return
     if time.time() < m.window_end_ts + 5:
-        return  # Still within grace period
+        return
     unresolved = [
         pos for pos in oracle.open_positions.values()
         if not pos.resolved and pos.market_id == m.market_id
@@ -104,6 +119,81 @@ def _resolve_expired_window(oracle: OracleBuffer) -> None:
         f"with {len(unresolved)} unresolved position(s) — forcing resolution"
     )
     _resolve_previous_window(oracle)
+
+
+def _resolve_market_positions(oracle: OracleBuffer, market_id: str) -> None:
+    """Resolve all unresolved positions for a specific expired market_id.
+
+    Queries Gamma API for the actual outcome. Falls back to window_open_price
+    stored on the position if available, then to LOST (conservative) if neither
+    source can determine the outcome.
+    """
+    outcome = _fetch_market_outcome(market_id)
+
+    for pos in oracle.open_positions.values():
+        if pos.resolved or pos.market_id != market_id:
+            continue
+
+        if outcome is not None:
+            # Gamma returned definitive result
+            btc_went_up = outcome
+        elif pos.window_open_price > 0:
+            # Use stored window_open_price vs current BTC as best estimate
+            btc_went_up = oracle.btc_price >= pos.window_open_price
+            log.warning(
+                f"[resolve-orphan] {market_id}: Gamma outcome unknown, "
+                f"using BTC {pos.window_open_price:.2f}→{oracle.btc_price:.2f}"
+            )
+        else:
+            # No data available — mark as LOST (conservative)
+            log.warning(f"[resolve-orphan] {market_id}: no outcome data, marking LOST")
+            btc_went_up = False
+
+        won = (pos.side in ("UP", "YES")) == btc_went_up
+        pos.resolution = 1.0 if won else 0.0
+        pos.resolved = True
+        log.info(
+            f"[resolve-orphan] {market_id} {pos.side} {'WON' if won else 'LOST'} "
+            f"(btc_went_up={btc_went_up}, outcome_source={'gamma' if outcome is not None else 'window_open_price' if pos.window_open_price > 0 else 'fallback'})"
+        )
+
+
+def _fetch_market_outcome(market_id: str) -> bool | None:
+    """Query Gamma API for whether a resolved BTC 5-min market went UP.
+
+    Returns True if UP/YES won, False if DOWN/NO won, None if unknown.
+    """
+    try:
+        resp = requests.get(
+            f"{GAMMA_BASE}/markets",
+            params={"id": market_id},
+            timeout=5,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        if not data:
+            return None
+        market = data[0] if isinstance(data, list) else data
+
+        if not market.get("closed", False):
+            return None  # Market still open — shouldn't happen for old markets
+
+        # outcomePrices is a JSON string like '["1", "0"]' (YES won) or '["0", "1"]' (NO won)
+        outcome_prices = market.get("outcomePrices")
+        if outcome_prices:
+            prices = json.loads(outcome_prices) if isinstance(outcome_prices, str) else outcome_prices
+            if isinstance(prices, list) and len(prices) == 2:
+                yes_price = float(prices[0])
+                return yes_price >= 0.5  # True = YES/UP won
+
+        winner = market.get("winner") or market.get("winnerOutcome", "")
+        if winner:
+            return "up" in str(winner).lower() or "yes" in str(winner).lower()
+
+        return None
+    except Exception as exc:
+        log.debug(f"Gamma outcome lookup failed for {market_id}: {exc!r}")
+        return None
 
 
 def _resolve_previous_window(oracle: OracleBuffer) -> None:

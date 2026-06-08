@@ -52,6 +52,7 @@ class OpenPosition:
     resolved: bool = False
     resolution: float = 0.0  # 1.0 = won, 0.0 = lost
     redeemed: bool = False
+    window_open_price: float = 0.0  # BTC price when this window opened (for self-resolution)
 
 
 @dataclass

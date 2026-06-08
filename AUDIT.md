@@ -5,14 +5,54 @@
 
 ---
 
+## Pre-Live Task Tracker
+> Target: Friday 2026-06-13. Update status as tasks complete.
+
+### 🔴 Must fix before ANY live trading
+
+| # | Task | File | Status |
+|---|---|---|---|
+| C1 | Division by zero at T=0 in fair_value | `fair_value.py` | ✅ Fixed 2026-06-08 |
+| C2 | Verify CLOB bid/ask array ordering | `clob_ws.py` | ✅ Fixed 2026-06-08 |
+| C3 | Order over-sizing when price ≈ 0 | `oms.py` | ✅ Fixed 2026-06-08 |
+| C4 | Monotonicity arb inequality inverted | `arb_loop.py` | ✅ Fixed 2026-06-08 |
+| C5 | Implement live ERC-1155 redemption | `redeem.py` | 🔴 TODO |
+| C6 | Cap pUSD approval (not uint256 max) | `wallet.py` | 🔴 TODO |
+| C7 | Startup barrier: wait for btc_price > 0 before strategies | `main.py` | 🔴 TODO |
+
+### 🟡 Credentials & testnet (your action needed)
+
+| # | Task | Status |
+|---|---|---|
+| T1 | Set `POLYGON_PRIVATE_KEY` in Railway env | 🔴 TODO |
+| T2 | Set `CLOB_API_KEY`, `CLOB_SECRET`, `CLOB_PASS_PHRASE` in Railway env | 🔴 TODO |
+| T3 | Fund wallet with 5 POL (gas) on Polygon | 🔴 TODO |
+| T4 | Wrap USDC.e → pUSD via CollateralOnramp | 🔴 TODO |
+| T5 | Test order submission on Polygon Amoy testnet | 🔴 TODO |
+| T6 | Test redemption on Amoy testnet | 🔴 TODO |
+
+### 🟢 Go/no-go gate (paper trading data)
+
+| Metric | Target | Current |
+|---|---|---|
+| Momentum trades | ≥ 30 | ~4 |
+| Momentum win rate | ≥ 65% | 50% (too few to judge) |
+| Consecutive loss streaks | None > 5 | Unknown |
+| Bankroll drawdown | < 5% | 0.04% ✅ |
+| Risk manager halts | 0 unexpected | Unknown |
+
+**Rule:** Do not go live until all 🔴 items above are done AND momentum win rate ≥ 65% on ≥ 30 trades.
+
+---
+
 ## Quick Summary
 
 | Severity | Count | Status |
 |---|---|---|
-| CRITICAL | 8 | Must fix before live trading |
-| HIGH | 8 | Likely bugs, fix soon |
-| MED | 22 | Production risks |
-| LOW | 6 | Polish |
+| CRITICAL | 8 | 4 fixed, 3 remaining |
+| HIGH | 8 | In progress |
+| MED | 22 | Post-launch |
+| LOW | 6 | Post-launch |
 
 ---
 

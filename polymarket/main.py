@@ -96,6 +96,19 @@ async def run() -> None:
     risk_mgr = RiskManager(bankroll=oracle.bankroll)
     order_queue: asyncio.Queue = asyncio.Queue()
 
+    # Warn clearly if running without a database — Railway redeploys wipe the
+    # ephemeral filesystem, so all trades and bankroll are lost on every deploy.
+    from polymarket.data import _use_db
+    if not _use_db():
+        log.warning("=" * 60)
+        log.warning("NO DATABASE — state will be lost on every redeploy!")
+        log.warning("Add a PostgreSQL database to your Railway project:")
+        log.warning("  Railway dashboard → your project → + New → Database → PostgreSQL")
+        log.warning("  Then link it to this service (DATABASE_URL auto-set)")
+        log.warning("=" * 60)
+    else:
+        log.info("PostgreSQL persistence active — state survives redeploys")
+
     mode = "PAPER TRADING" if paper else "LIVE TRADING"
     log.info(f"Mad Scientist starting in {mode} mode")
     log.info(f"   Bankroll: ${oracle.bankroll:.2f} pUSD")

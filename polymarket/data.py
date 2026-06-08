@@ -11,19 +11,28 @@ TRADE_LOG = DATA_DIR / "trades.json"
 STATE_FILE = DATA_DIR / "bot_state.json"
 
 _db_ready: bool | None = None  # None = not yet checked
+_db_last_fail: float = 0.0    # timestamp of last failed attempt
+_DB_RETRY_SECS = 30.0         # retry interval when DB is unavailable
 
 
 def _use_db() -> bool:
-    """Return True if PostgreSQL is available. Result is cached after first check."""
-    global _db_ready
-    if _db_ready is None:
+    """Return True if PostgreSQL is available. Retries every 30s after failure."""
+    import time
+    global _db_ready, _db_last_fail
+    if _db_ready is True:
+        return True
+    now = time.time()
+    if _db_ready is None or (now - _db_last_fail > _DB_RETRY_SECS):
+        _db_last_fail = now
         try:
             from polymarket import db
             _db_ready = db.ensure_tables()
+            if _db_ready:
+                log.info("PostgreSQL connected and tables ready")
         except Exception as exc:
             log.debug(f"DB unavailable: {exc!r}")
             _db_ready = False
-    return _db_ready
+    return bool(_db_ready)
 
 
 def _ensure_dir() -> None:

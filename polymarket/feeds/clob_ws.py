@@ -59,6 +59,16 @@ async def clob_ws_loop(oracle: OracleBuffer) -> None:
                         event_type = msg.get("event_type", "")
                         oracle.last_clob_ts = time.time()
 
+                        # Reconnect immediately when active market rotates — don't
+                        # wait for the old connection to close on its own (can take minutes)
+                        current = oracle.active_market
+                        if current and current.market_id != market.market_id:
+                            log.info(
+                                f"Market rotated {market.market_id}→{current.market_id}"
+                                " — reconnecting CLOB WS"
+                            )
+                            break
+
                         if event_type == "book":
                             _update_orderbook(oracle, msg)
                         elif event_type == "trade":

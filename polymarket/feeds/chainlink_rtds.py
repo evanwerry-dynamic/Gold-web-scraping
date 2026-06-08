@@ -32,7 +32,7 @@ async def chainlink_rtds_loop(oracle: OracleBuffer) -> None:
     so signal_loop can fire even without Polymarket connectivity.
     """
     log.info("Chainlink/Gamma feed starting...")
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     while True:
         # Time-based forced resolution: if the active window has expired and
         # still has unresolved positions, resolve immediately without waiting

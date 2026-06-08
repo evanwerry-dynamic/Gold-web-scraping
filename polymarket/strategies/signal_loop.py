@@ -76,13 +76,18 @@ async def signal_loop(
         )
 
         oracle.strategy_phase = "EDGE"
-        ask = market.yes_ask if direction == "UP" else market.no_ask
-        tradeable, net_edge = should_trade(fair, ask, MIN_EDGE_NET)
+        if direction == "UP":
+            ask = market.yes_ask
+            fair_direction = fair            # P(UP wins)
+        else:
+            ask = market.no_ask
+            fair_direction = 1.0 - fair     # P(DOWN wins) = complement of P(UP)
+        tradeable, net_edge = should_trade(fair_direction, ask, MIN_EDGE_NET)
 
         if not tradeable:
             log.debug(
-                f"[A] No trade: δ={delta:.4%} fair={fair:.3f} ask={ask:.3f} "
-                f"net_edge={net_edge:.4f}"
+                f"[A] No trade: δ={delta:.4%} fair_{direction}={fair_direction:.3f} "
+                f"ask={ask:.3f} net_edge={net_edge:.4f}"
             )
             continue
 
@@ -98,7 +103,7 @@ async def signal_loop(
 
         oracle.strategy_phase = "LIMIT"
         sizing = kelly_size(
-            fair_prob=fair,
+            fair_prob=fair_direction,
             market_price=ask,
             bankroll=oracle.bankroll,
             scale_factor=risk_mgr.position_scale_factor(),
@@ -117,7 +122,7 @@ async def signal_loop(
             "price": ask,
             "dollar_size": sizing["dollar_size"],
             "shares": sizing["shares"],
-            "fair": fair,
+            "fair": fair_direction,
             "edge": net_edge,
             "delta": delta,
             "order_type": "FOK",

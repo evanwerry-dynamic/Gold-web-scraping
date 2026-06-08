@@ -60,8 +60,19 @@ def restore_state(oracle: OracleBuffer) -> None:
     saved_bankroll = state.get("bankroll", 0.0)
     if saved_bankroll > 0:
         oracle.bankroll = saved_bankroll
-    oracle.total_pnl = state.get("total_pnl", 0.0)
-    oracle.today_pnl = state.get("today_pnl", 0.0)
+    # Recompute P&L from the trade log — never restore stale in-memory totals.
+    # This keeps LIVE header and HISTORY page always in sync after a redeploy.
+    from polymarket.data import load_trade_history
+    from datetime import datetime, timezone
+    today_start = datetime.now(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    ).timestamp()
+    all_closed = [t for t in load_trade_history() if t.get("pnl") is not None]
+    oracle.total_pnl = sum(t["pnl"] for t in all_closed)
+    oracle.today_pnl = sum(
+        t["pnl"] for t in all_closed
+        if datetime.fromisoformat(t.get("timestamp", "1970-01-01")).timestamp() >= today_start
+    )
 
     for oid, p in state.get("open_positions", {}).items():
         oracle.open_positions[oid] = OpenPosition(

@@ -9,16 +9,20 @@ Runs every 30s, scans open_positions for resolved+unredeemed entries.
 """
 import asyncio
 import logging
+from typing import TYPE_CHECKING
 
 from polymarket.oracle_buffer import OracleBuffer
 from polymarket.data import append_trade
+
+if TYPE_CHECKING:
+    from polymarket.risk import RiskManager
 
 log = logging.getLogger(__name__)
 
 REDEEM_INTERVAL = 30.0
 
 
-async def redeem_loop(oracle: OracleBuffer) -> None:
+async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = None) -> None:
     """Claim resolved ERC-1155 positions for pUSD. Never exits."""
     log.info("Redemption loop starting...")
     while True:
@@ -43,6 +47,10 @@ async def redeem_loop(oracle: OracleBuffer) -> None:
                 # Update running P&L totals so the dashboard header is correct
                 oracle.total_pnl += final_pnl
                 oracle.today_pnl += final_pnl
+
+                # Feed result into risk manager so streak/velocity circuit breakers work
+                if risk_mgr is not None:
+                    risk_mgr.on_trade_result(final_pnl)
 
                 entry_price = pos.cost_basis / pos.shares if pos.shares > 0 else 0.0
                 btc_open   = pos.window_open_price

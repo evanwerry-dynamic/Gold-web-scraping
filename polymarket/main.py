@@ -123,7 +123,7 @@ async def run() -> None:
         _guard(lambda: maker_loop(oracle, order_queue, risk_mgr),  "maker_loop"),
         _guard(lambda: arb_loop(oracle, order_queue, risk_mgr),    "arb_loop"),
         _guard(lambda: oms_loop(order_queue, oracle, risk_mgr),    "oms_loop"),
-        _guard(lambda: redeem_loop(oracle),                        "redeem_loop"),
+        _guard(lambda: redeem_loop(oracle, risk_mgr),              "redeem_loop"),
         _guard(lambda: sanity_loop(oracle),                        "sanity_loop"),
         _guard(lambda: persist_loop(oracle),                       "persist_loop"),
         _guard(lambda: calibrator_loop(),                          "calibrator"),

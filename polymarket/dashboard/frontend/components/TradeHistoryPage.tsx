@@ -1,6 +1,6 @@
 "use client";
 import ReactECharts from "echarts-for-react";
-import { useTradesStore, Trade } from "@/store";
+import { useTradesStore, usePnlStore, Trade } from "@/store";
 
 const STRAT: Record<string, string> = {
   A: "Momentum",
@@ -47,11 +47,13 @@ type StratBucket = { trades: number; pnl: number; wins: number; volume: number }
 
 export function TradeHistoryPage() {
   const trades = useTradesStore((s) => s.trades);
+  // Server-authoritative P&L — same source as Live page header.
+  // Avoids drift when the 200-record replay window doesn't cover all-time history.
+  const serverPnl = usePnlStore((s) => s.pnl);
 
   // ── Metrics ──────────────────────────────────────────────────────────────────
   const closed = trades.filter((t) => t.pnl !== null);
   const wins   = closed.filter((t) => (t.pnl ?? 0) > 0);
-  const totalPnl  = closed.reduce((s, t) => s + (t.pnl ?? 0), 0);
   const winRate   = closed.length > 0 ? wins.length / closed.length : null;
   const avgEdge   = trades.length > 0 ? trades.reduce((s, t) => s + (t.edge ?? 0), 0) / trades.length : 0;
   const bestTrade  = closed.length > 0 ? Math.max(...closed.map((t) => t.pnl ?? 0)) : null;
@@ -188,8 +190,9 @@ export function TradeHistoryPage() {
           sub={`${withDelta.length} auditable`}
           color={verifiedWinRate === null ? "#555" : verifiedWinRate >= 0.6 ? "#00ff88" : "#ff4444"} />
         <StatCard label="Total P&L"
-          value={`$${totalPnl.toFixed(2)}`}
-          color={totalPnl >= 0 ? "#00ff88" : "#ff4444"} />
+          value={serverPnl.bankroll > 0 ? `$${serverPnl.total.toFixed(2)}` : "—"}
+          sub="server total"
+          color={serverPnl.total >= 0 ? "#00ff88" : "#ff4444"} />
         <StatCard label="Avg Edge"
           value={`${(avgEdge * 100).toFixed(2)}%`}
           color={avgEdge >= 0 ? "#00ff88" : "#ff4444"} />

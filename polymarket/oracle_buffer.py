@@ -14,15 +14,20 @@ class BinanceVolEstimator:
         self._last_price: float | None = None
 
     def update(self, price: float) -> None:
-        if self._last_price and self._last_price > 0:
+        if price > 0 and self._last_price and self._last_price > 0:
             self._returns.append(np.log(price / self._last_price))
-        self._last_price = price
+        if price > 0:
+            self._last_price = price
 
     def sigma_per_second(self) -> float:
         """Return per-second realized vol. Falls back to 0.0002 if insufficient data."""
         if len(self._returns) < 5:
             return 0.0002
         return float(np.std(self._returns))
+
+    def is_ready(self) -> bool:
+        """True once we have enough samples for a meaningful vol estimate."""
+        return len(self._returns) >= 5
 
 
 @dataclass

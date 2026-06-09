@@ -48,6 +48,9 @@ class RiskManager:
         if current_bankroll <= 0:
             return False, "Bankroll is zero or negative"
 
+        if self.initial <= 0 or self.daily_start <= 0 or self.monthly_start <= 0:
+            return False, "RiskManager not properly initialised (zero bankroll)"
+
         # Permanent halt
         total_loss_pct = (self.initial - current_bankroll) / self.initial
         if total_loss_pct > self.total_loss_limit:
@@ -122,7 +125,11 @@ def kelly_size(
     Returns dict with dollar_size, shares, kelly_pct, edge.
     Returns zero-sized dict when no edge exists.
     """
-    if fair_prob <= market_price or market_price <= 0:
+    if market_price <= 0 or market_price >= 1:
+        return {"dollar_size": 0.0, "shares": 0.0, "kelly_pct": 0.0, "edge": 0.0}
+    if fair_prob <= market_price:
+        return {"dollar_size": 0.0, "shares": 0.0, "kelly_pct": 0.0, "edge": 0.0}
+    if bankroll <= 0:
         return {"dollar_size": 0.0, "shares": 0.0, "kelly_pct": 0.0, "edge": 0.0}
 
     b = (1.0 - market_price) / market_price  # decimal odds

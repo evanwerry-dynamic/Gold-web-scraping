@@ -30,11 +30,13 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
     while True:
         await asyncio.sleep(REDEEM_INTERVAL)
 
-        to_redeem = [
-            (oid, pos)
-            for oid, pos in oracle.open_positions.items()
-            if pos.resolved and not pos.redeemed
-        ]
+        # Snapshot under lock to avoid RuntimeError from concurrent OMS mutations
+        async with oracle.bankroll_lock:
+            to_redeem = [
+                (oid, pos)
+                for oid, pos in oracle.open_positions.items()
+                if pos.resolved and not pos.redeemed
+            ]
 
         for order_id, pos in to_redeem:
             try:
@@ -54,8 +56,10 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
                 pos.redeemed = True
                 final_pnl = payout - pos.cost_basis
 
-                oracle.total_pnl += final_pnl
-                oracle.today_pnl += final_pnl
+                # Protect cumulative P&L mutations under the same lock used for bankroll
+                async with oracle.bankroll_lock:
+                    oracle.total_pnl += final_pnl
+                    oracle.today_pnl += final_pnl
 
                 # Feed result into risk manager so loss-streak and velocity
                 # circuit breakers see actual settlements, not just paper sims.

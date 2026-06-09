@@ -70,6 +70,13 @@ async def signal_loop(
         if last_fired_window == market.market_id:
             continue
 
+        # Block trades until the vol estimator has real data (≥5 samples).
+        # With the 0.0002 fallback sigma and only 1-2 samples, z-scores are
+        # wildly inflated and fair_value collapses to 0.0 or 1.0 on any small delta.
+        if not oracle.vol_estimator.is_ready():
+            log.debug("[A] Vol estimator not ready (< 5 samples) — skipping")
+            continue
+
         delta = oracle.window_delta()
         if abs(delta) < MIN_DELTA:
             log.info(

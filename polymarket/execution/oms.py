@@ -13,6 +13,7 @@ import asyncio
 import datetime
 import logging
 import time
+from collections import deque
 from enum import Enum
 
 from polymarket.data import append_trade
@@ -27,8 +28,11 @@ FILL_POLL_INTERVAL = 1.0   # seconds between fill status checks
 FOK_TIMEOUT = 5.0          # seconds before FOK is considered failed
 GTC_TIMEOUT = 30.0         # seconds before GTC is cancelled
 
-# H11: track filled order IDs to prevent double-debit
-_filled_order_ids: set[str] = set()
+# H11: track filled order IDs to prevent double-debit.
+# Bounded to prevent memory leak — 2000 entries covers weeks of trading.
+# Oldest entries are evicted after 2000 fills; the risk of a stale ID collision
+# re-entering is negligible given order IDs encode millisecond timestamps.
+_filled_order_ids: deque = deque(maxlen=2000)
 
 # M8: track pending market keys to deduplicate OMS orders
 _pending_market_keys: set[str] = set()
@@ -80,8 +84,10 @@ async def _process_order(
         log.warning(f"[OMS] Discarding stale {intent.get('strategy')} order ({age:.1f}s old)")
         return
 
-    # M8: deduplicate orders by market_id + strategy
-    key = f"{intent.get('market_id')}-{intent.get('strategy')}"
+    # M8: deduplicate orders by market_id + strategy + side.
+    # Side must be included so that arb bundles (YES + NO on same market)
+    # and maker pairs (BUY bid + SELL ask) each get through as distinct orders.
+    key = f"{intent.get('market_id')}-{intent.get('strategy')}-{intent.get('side', '')}"
     if key in _pending_market_keys:
         log.debug(f"[OMS] Skipping duplicate order key: {key}")
         return
@@ -268,7 +274,7 @@ async def _track_until_terminal(
                 if tracked_id in _filled_order_ids:
                     log.warning(f"[OMS] Skipping already-debited order: {tracked_id}")
                     return
-                _filled_order_ids.add(tracked_id)
+                _filled_order_ids.append(tracked_id)
 
                 fill_price = float(order.get("avgPrice") or intent["price"])
                 shares = float(order.get("sizeMatched") or order.get("size") or intent.get("shares", 0))
@@ -331,7 +337,7 @@ async def _track_until_terminal(
             order = await loop.run_in_executor(None, client.get_order, tracked_id)
             status = (order.get("status") or "").lower()
             if status in ("matched", "filled") and tracked_id not in _filled_order_ids:
-                _filled_order_ids.add(tracked_id)
+                _filled_order_ids.append(tracked_id)
                 fill_price = float(order.get("avgPrice") or intent.get("price", 0))
                 shares = float(order.get("sizeMatched") or order.get("size") or intent.get("shares", 0))
                 dollar_size = shares * fill_price

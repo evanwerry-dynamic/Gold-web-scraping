@@ -14,6 +14,9 @@ export interface Trade {
   pnl: number | null;
   paper: boolean;
   timestamp: string;
+  btc_open?: number | null;
+  btc_settle?: number | null;
+  btc_delta_pct?: number | null;
 }
 
 export interface Position {

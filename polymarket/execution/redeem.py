@@ -45,6 +45,12 @@ async def redeem_loop(oracle: OracleBuffer) -> None:
                 oracle.today_pnl += final_pnl
 
                 entry_price = pos.cost_basis / pos.shares if pos.shares > 0 else 0.0
+                btc_open   = pos.window_open_price
+                btc_settle = pos.settlement_price
+                btc_delta_pct = (
+                    (btc_settle - btc_open) / btc_open * 100
+                    if btc_open > 0 and btc_settle > 0 else None
+                )
                 redeem_record = {
                     "order_id": order_id,
                     "action": "redeem",
@@ -58,6 +64,9 @@ async def redeem_loop(oracle: OracleBuffer) -> None:
                     "payout": payout,
                     "pnl": final_pnl,
                     "paper": True,
+                    "btc_open": btc_open,
+                    "btc_settle": btc_settle,
+                    "btc_delta_pct": btc_delta_pct,
                 }
                 await asyncio.get_running_loop().run_in_executor(None, append_trade, redeem_record)
                 # Same id as the open event — frontend store upserts (pnl: null → value)
@@ -74,6 +83,9 @@ async def redeem_loop(oracle: OracleBuffer) -> None:
                     "pnl": round(final_pnl, 2),
                     "paper": True,
                     "timestamp": datetime.datetime.utcnow().isoformat(),
+                    "btc_open": btc_open if btc_open else None,
+                    "btc_settle": btc_settle if btc_settle else None,
+                    "btc_delta_pct": round(btc_delta_pct, 3) if btc_delta_pct is not None else None,
                 })
                 # Remove from open_positions — redeemed, no longer relevant
                 oracle.open_positions.pop(order_id, None)

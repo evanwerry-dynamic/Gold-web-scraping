@@ -162,7 +162,15 @@ export function TradeHistoryPage() {
     (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
   );
 
-  const COL = "120px 90px 90px 55px 65px 65px 60px 65px 80px";
+  // BTC delta stats (only for resolved trades that have btc_delta_pct)
+  const withDelta = closed.filter((t) => t.btc_delta_pct != null);
+  const deltaMatchCount = withDelta.filter((t) => {
+    const up = (t.btc_delta_pct ?? 0) >= 0;
+    return (["UP","YES"].includes(t.side) && up) || (!["UP","YES"].includes(t.side) && !up);
+  }).length;
+  const verifiedWinRate = withDelta.length > 0 ? deltaMatchCount / withDelta.length : null;
+
+  const COL = "110px 90px 75px 50px 75px 60px 55px 55px 70px";
 
   return (
     <div style={{ flex: 1, overflowY: "auto", background: "#0a0a0a", padding: 12, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -175,6 +183,10 @@ export function TradeHistoryPage() {
           value={winRate !== null ? `${(winRate * 100).toFixed(1)}%` : "—"}
           sub={`${wins.length} / ${closed.length}`}
           color={winRate === null ? "#555" : winRate >= 0.6 ? "#00ff88" : winRate >= 0.4 ? "#ffcc00" : "#ff4444"} />
+        <StatCard label="Verified"
+          value={verifiedWinRate !== null ? `${(verifiedWinRate * 100).toFixed(1)}%` : "—"}
+          sub={`${withDelta.length} auditable`}
+          color={verifiedWinRate === null ? "#555" : verifiedWinRate >= 0.6 ? "#00ff88" : "#ff4444"} />
         <StatCard label="Total P&L"
           value={`$${totalPnl.toFixed(2)}`}
           color={totalPnl >= 0 ? "#00ff88" : "#ff4444"} />
@@ -229,7 +241,7 @@ export function TradeHistoryPage() {
           color: "#333", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase",
         }}>
           <span>Time</span><span>Market</span><span>Strategy</span>
-          <span>Side</span><span>Entry</span><span>Fair</span>
+          <span>Side</span><span>BTC Δ</span><span>Entry</span>
           <span>Edge</span><span>Size</span><span style={{ textAlign: "right" }}>P&L</span>
         </div>
 
@@ -242,6 +254,18 @@ export function TradeHistoryPage() {
             const pnlColor = t.pnl === null ? "#444"
               : t.pnl > 0 ? "#00ff88" : "#ff4444";
             const sideColor = ["UP", "YES"].includes(t.side) ? "#00ff88" : "#ff9900";
+
+            // BTC Δ column: show window move % + auditable indicator
+            const hasDelta = t.btc_delta_pct != null;
+            const deltaPositive = (t.btc_delta_pct ?? 0) >= 0;
+            const betUp = ["UP","YES"].includes(t.side);
+            // Verified = direction matches the bet (if trade is closed)
+            const verified = t.pnl !== null && hasDelta && ((betUp && deltaPositive) || (!betUp && !deltaPositive));
+            const deltaColor = !hasDelta ? "#333" : deltaPositive ? "#00ff88" : "#ff4444";
+            const deltaTooltip = (t.btc_open && t.btc_settle)
+              ? `BTC: ${t.btc_open.toLocaleString("en-US", {maximumFractionDigits: 0})} → ${t.btc_settle.toLocaleString("en-US", {maximumFractionDigits: 0})}`
+              : undefined;
+
             return (
               <div key={t.id} style={{
                 display: "grid", gridTemplateColumns: COL, gap: 6,
@@ -254,8 +278,15 @@ export function TradeHistoryPage() {
                 </span>
                 <span style={{ color: "#666" }}>{STRAT[t.strategy] ?? t.strategy}</span>
                 <span style={{ color: sideColor, fontWeight: 700 }}>{t.side}</span>
+                <span
+                  style={{ color: deltaColor, fontFamily: "monospace", fontSize: 10 }}
+                  title={deltaTooltip}
+                >
+                  {hasDelta
+                    ? `${deltaPositive ? "+" : ""}${(t.btc_delta_pct ?? 0).toFixed(3)}%${t.pnl !== null ? (verified ? " ✓" : " ✗") : ""}`
+                    : "—"}
+                </span>
                 <span>{(t.entry_price ?? 0).toFixed(3)}</span>
-                <span style={{ color: "#555" }}>{(t.fair_value ?? 0).toFixed(3)}</span>
                 <span style={{ color: "#00aa44" }}>{((t.edge ?? 0) * 100).toFixed(1)}%</span>
                 <span style={{ color: "#666" }}>${(t.dollar_size ?? 0).toFixed(2)}</span>
                 <span style={{ textAlign: "right", color: pnlColor, fontWeight: 700 }}>

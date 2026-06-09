@@ -144,6 +144,9 @@ async def websocket_endpoint(ws: WebSocket):
                         "pnl": t.get("pnl", None),
                         "paper": t.get("paper", True),
                         "timestamp": t.get("timestamp", ""),
+                        "btc_open": t.get("btc_open"),
+                        "btc_settle": t.get("btc_settle"),
+                        "btc_delta_pct": t.get("btc_delta_pct"),
                     }
                 }))
         except Exception as exc:

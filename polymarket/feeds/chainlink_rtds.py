@@ -152,11 +152,15 @@ async def _resolve_market_positions(oracle: OracleBuffer, market_id: str, loop) 
             btc_went_up = False
 
         won = (pos.side in ("UP", "YES")) == btc_went_up
-        pos.resolution = 1.0 if won else 0.0
-        pos.resolved = True
+        pos.resolution       = 1.0 if won else 0.0
+        pos.resolved         = True
+        pos.settlement_price = oracle.btc_price
+        source = "gamma" if outcome is not None else ("window_open_price" if pos.window_open_price > 0 else "fallback")
+        pct_move = (oracle.btc_price - pos.window_open_price) / pos.window_open_price * 100 if pos.window_open_price else 0
         log.info(
-            f"[resolve-orphan] {market_id} {pos.side} {'WON' if won else 'LOST'} "
-            f"(btc_went_up={btc_went_up}, outcome_source={'gamma' if outcome is not None else 'window_open_price' if pos.window_open_price > 0 else 'fallback'})"
+            f"[resolve-orphan] {market_id} {pos.side} {'WON ✓' if won else 'LOST ✗'} | "
+            f"window: {pos.window_open_price:.2f}→{oracle.btc_price:.2f} ({pct_move:+.3f}%) | "
+            f"source={source}"
         )
 
 
@@ -218,8 +222,9 @@ def _resolve_previous_window(oracle: OracleBuffer) -> None:
         if pos.resolved or pos.market_id != prev.market_id:
             continue
         won = (pos.side in ("UP", "YES")) == btc_went_up
-        pos.resolution = 1.0 if won else 0.0
-        pos.resolved   = True
+        pos.resolution       = 1.0 if won else 0.0
+        pos.resolved         = True
+        pos.settlement_price = final_price   # stored so redeem_loop can write it to history
         resolved_count += 1
         outcome = "WON ✓" if won else "LOST ✗"
         pct_move = (final_price - open_price) / open_price * 100 if open_price else 0

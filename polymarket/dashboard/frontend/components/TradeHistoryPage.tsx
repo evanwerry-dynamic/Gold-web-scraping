@@ -29,16 +29,16 @@ function StatCard({
     <div style={{
       flex: "1 1 130px",
       background: "#111",
-      border: "1px solid #1e1e1e",
+      border: "1px solid #222",
       padding: "12px 14px",
     }}>
-      <div style={{ color: "#444", fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 6 }}>
+      <div style={{ color: "#666", fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 6 }}>
         {label}
       </div>
       <div style={{ color: color ?? "#00ff88", fontSize: 20, fontWeight: 700, lineHeight: 1 }}>
         {value}
       </div>
-      {sub && <div style={{ color: "#444", fontSize: 10, marginTop: 4 }}>{sub}</div>}
+      {sub && <div style={{ color: "#555", fontSize: 10, marginTop: 4 }}>{sub}</div>}
     </div>
   );
 }
@@ -88,14 +88,14 @@ export function TradeHistoryPage() {
     grid: { top: 16, right: 16, bottom: 36, left: 56 },
     xAxis: {
       type: "time",
-      axisLabel: { color: "#444", fontSize: 9 },
+      axisLabel: { color: "#666", fontSize: 9 },
       axisLine: { lineStyle: { color: "#222" } },
       splitLine: { show: false },
     },
     yAxis: {
       type: "value",
       axisLabel: { color: "#444", fontSize: 9, formatter: (v: number) => `$${v}` },
-      splitLine: { lineStyle: { color: "#181818" } },
+      splitLine: { lineStyle: { color: "#1a1a1a" } },
     },
     series: [{
       type: "line",
@@ -121,7 +121,7 @@ export function TradeHistoryPage() {
     xAxis: {
       type: "value",
       axisLabel: { color: "#444", fontSize: 9, formatter: (v: number) => `$${v}` },
-      splitLine: { lineStyle: { color: "#181818" } },
+      splitLine: { lineStyle: { color: "#1a1a1a" } },
     },
     yAxis: {
       type: "category",
@@ -206,26 +206,26 @@ export function TradeHistoryPage() {
 
       {/* ── Charts ── */}
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 10, minHeight: 220 }}>
-        <div style={{ background: "#111", border: "1px solid #1e1e1e", padding: "10px 12px" }}>
-          <div style={{ color: "#444", fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 6 }}>
+        <div style={{ background: "#111", border: "1px solid #222", padding: "10px 12px" }}>
+          <div style={{ color: "#666", fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 6 }}>
             Cumulative P&L
           </div>
           {cumData.length > 1 ? (
             <ReactECharts option={pnlOption} style={{ height: 180 }} opts={{ renderer: "canvas" }} />
           ) : (
-            <div style={{ height: 180, display: "flex", alignItems: "center", justifyContent: "center", color: "#2a2a2a", fontSize: 12 }}>
+            <div style={{ height: 180, display: "flex", alignItems: "center", justifyContent: "center", color: "#333", fontSize: 12 }}>
               Waiting for trades
             </div>
           )}
         </div>
-        <div style={{ background: "#111", border: "1px solid #1e1e1e", padding: "10px 12px" }}>
-          <div style={{ color: "#444", fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 6 }}>
+        <div style={{ background: "#111", border: "1px solid #222", padding: "10px 12px" }}>
+          <div style={{ color: "#666", fontSize: 9, letterSpacing: "0.14em", textTransform: "uppercase", marginBottom: 6 }}>
             P&L by Strategy
           </div>
           {stratKeys.length > 0 ? (
             <ReactECharts option={stratOption} style={{ height: 180 }} opts={{ renderer: "canvas" }} />
           ) : (
-            <div style={{ height: 180, display: "flex", alignItems: "center", justifyContent: "center", color: "#2a2a2a", fontSize: 12 }}>
+            <div style={{ height: 180, display: "flex", alignItems: "center", justifyContent: "center", color: "#333", fontSize: 12 }}>
               Waiting for trades
             </div>
           )}
@@ -233,12 +233,12 @@ export function TradeHistoryPage() {
       </div>
 
       {/* ── Trade table ── */}
-      <div style={{ background: "#111", border: "1px solid #1e1e1e", overflowX: "auto" }}>
+      <div style={{ background: "#111", border: "1px solid #222", overflowX: "auto" }}>
         {/* Header */}
         <div style={{
           display: "grid", gridTemplateColumns: COL, gap: 6,
-          padding: "7px 12px", borderBottom: "1px solid #1a1a1a",
-          color: "#333", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase",
+          padding: "7px 12px", borderBottom: "1px solid #1e1e1e",
+          color: "#555", fontSize: 9, letterSpacing: "0.12em", textTransform: "uppercase",
         }}>
           <span>Time</span><span>Market</span><span>Strategy</span>
           <span>Side</span><span>BTC Δ</span><span>Entry</span>
@@ -246,7 +246,7 @@ export function TradeHistoryPage() {
         </div>
 
         {displayTrades.length === 0 ? (
-          <div style={{ padding: 32, textAlign: "center", color: "#2a2a2a", fontSize: 12 }}>
+          <div style={{ padding: 32, textAlign: "center", color: "#333", fontSize: 12 }}>
             No trades yet — strategy fires at T−10s when |Δ| &gt; 0.10%
           </div>
         ) : (
@@ -261,7 +261,7 @@ export function TradeHistoryPage() {
             const betUp = ["UP","YES"].includes(t.side);
             // Verified = direction matches the bet (if trade is closed)
             const verified = t.pnl !== null && hasDelta && ((betUp && deltaPositive) || (!betUp && !deltaPositive));
-            const deltaColor = !hasDelta ? "#333" : deltaPositive ? "#00ff88" : "#ff4444";
+            const deltaColor = !hasDelta ? "#444" : deltaPositive ? "#00ff88" : "#ff4444";
             const deltaTooltip = (t.btc_open && t.btc_settle)
               ? `BTC: ${t.btc_open.toLocaleString("en-US", {maximumFractionDigits: 0})} → ${t.btc_settle.toLocaleString("en-US", {maximumFractionDigits: 0})}`
               : undefined;
@@ -269,14 +269,14 @@ export function TradeHistoryPage() {
             return (
               <div key={t.id} style={{
                 display: "grid", gridTemplateColumns: COL, gap: 6,
-                padding: "5px 12px", borderBottom: "1px solid #141414",
+                padding: "5px 12px", borderBottom: "1px solid #161616",
                 fontSize: 11, alignItems: "center",
               }}>
-                <span style={{ color: "#444" }}>{fmtTime(t.timestamp)}</span>
-                <span style={{ color: "#555", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 10 }}>
+                <span style={{ color: "#777" }}>{fmtTime(t.timestamp)}</span>
+                <span style={{ color: "#888", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 10 }}>
                   {t.market_id}
                 </span>
-                <span style={{ color: "#666" }}>{STRAT[t.strategy] ?? t.strategy}</span>
+                <span style={{ color: "#aaa" }}>{STRAT[t.strategy] ?? t.strategy}</span>
                 <span style={{ color: sideColor, fontWeight: 700 }}>{t.side}</span>
                 <span
                   style={{ color: deltaColor, fontFamily: "monospace", fontSize: 10 }}
@@ -287,10 +287,10 @@ export function TradeHistoryPage() {
                     : "—"}
                 </span>
                 <span>{(t.entry_price ?? 0).toFixed(3)}</span>
-                <span style={{ color: "#00aa44" }}>{((t.edge ?? 0) * 100).toFixed(1)}%</span>
-                <span style={{ color: "#666" }}>${(t.dollar_size ?? 0).toFixed(2)}</span>
+                <span style={{ color: "#4ec994" }}>{((t.edge ?? 0) * 100).toFixed(1)}%</span>
+                <span style={{ color: "#aaa" }}>${(t.dollar_size ?? 0).toFixed(2)}</span>
                 <span style={{ textAlign: "right", color: pnlColor, fontWeight: 700 }}>
-                  {t.pnl === null ? "OPEN" : `$${t.pnl.toFixed(2)}`}
+                  {t.pnl === null ? <span style={{ color: "#555", fontWeight: 400 }}>OPEN</span> : `$${t.pnl.toFixed(2)}`}
                 </span>
               </div>
             );

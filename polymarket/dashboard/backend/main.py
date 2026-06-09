@@ -18,7 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from polymarket.dashboard.backend.bridge import set_connection_manager
+from polymarket.dashboard.backend.bridge import set_connection_manager, get_oracle
 
 log = logging.getLogger(__name__)
 
@@ -118,7 +118,44 @@ app.add_middleware(
 
 @app.get("/health")
 async def health():
-    return JSONResponse({"status": "ok", "clients": len(manager._active)})
+    oracle = get_oracle()
+    return JSONResponse({
+        "status": "ok",
+        "clients": len(manager._active),
+        "halted": oracle.emergency_halt if oracle else False,
+    })
+
+
+@app.post("/halt")
+async def halt():
+    """Emergency kill switch — stop all new order submission immediately."""
+    oracle = get_oracle()
+    if oracle is None:
+        return JSONResponse({"error": "bot not running"}, status_code=503)
+    oracle.emergency_halt = True
+    log.warning("EMERGENCY HALT ACTIVATED via dashboard")
+    # Best-effort cancel all live CLOB orders
+    if not oracle.paper_trading:
+        try:
+            from polymarket.execution.wallet import get_clob_client
+            client = get_clob_client()
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, client.cancel_all)
+            log.info("Cancel-all sent to CLOB on halt")
+        except Exception as exc:
+            log.warning(f"Cancel-all on halt failed: {exc!r}")
+    return JSONResponse({"halted": True})
+
+
+@app.post("/resume")
+async def resume():
+    """Resume trading after an emergency halt."""
+    oracle = get_oracle()
+    if oracle is None:
+        return JSONResponse({"error": "bot not running"}, status_code=503)
+    oracle.emergency_halt = False
+    log.info("Trading resumed via dashboard")
+    return JSONResponse({"halted": False})
 
 
 @app.websocket("/ws")

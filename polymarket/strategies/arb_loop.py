@@ -40,6 +40,9 @@ async def arb_loop(
     while True:
         await asyncio.sleep(SCAN_INTERVAL)
 
+        if oracle.emergency_halt:
+            continue
+
         allowed, reason = risk_mgr.allow_trade(oracle.bankroll)
         if not allowed:
             continue

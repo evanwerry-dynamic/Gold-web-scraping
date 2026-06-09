@@ -56,6 +56,7 @@ export interface Health {
   open_positions: number;
   strategy_phase: string;
   btc_price: number;
+  halted: boolean;
 }
 
 // ── Stores ────────────────────────────────────────────────────────────────────
@@ -160,6 +161,7 @@ export const useHealthStore = create<{
     open_positions: 0,
     strategy_phase: "SCAN",
     btc_price: 0,
+    halted: false,
   },
   btcHistory: [],
   update: (h: Partial<Health>) =>

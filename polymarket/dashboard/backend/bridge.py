@@ -22,14 +22,24 @@ BROADCAST_INTERVAL = 1.0  # Push state every second
 # Shared ConnectionManager — set by dashboard main.py on startup
 _connection_manager = None
 
+# Shared oracle reference — set when broadcast_loop starts, used by HTTP halt endpoints
+_oracle = None
+
 
 def set_connection_manager(mgr) -> None:
     global _connection_manager
     _connection_manager = mgr
 
 
+def get_oracle():
+    """Return the live OracleBuffer, or None if bot hasn't started yet."""
+    return _oracle
+
+
 async def broadcast_loop(oracle: OracleBuffer) -> None:
     """Broadcast oracle state to all connected dashboard clients every second."""
+    global _oracle
+    _oracle = oracle
     log.info("Dashboard broadcast loop starting...")
     while True:
         await asyncio.sleep(BROADCAST_INTERVAL)
@@ -69,7 +79,8 @@ async def _broadcast_health(oracle: OracleBuffer) -> None:
         "ws_clob": (now - oracle.last_clob_ts) < 60,
         "open_positions": len(oracle.open_positions),
         "strategy_phase": oracle.strategy_phase,
-        "active_price_source": oracle.active_price_source,  # M12
+        "active_price_source": oracle.active_price_source,
+        "halted": oracle.emergency_halt,
     }
     # Only include btc_price when the bot has a real price — avoids overwriting
     # the standalone Kraken feed's price with 0 at startup

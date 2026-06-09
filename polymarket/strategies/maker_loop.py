@@ -39,6 +39,9 @@ async def maker_loop(
     while True:
         await asyncio.sleep(REQUOTE_INTERVAL)
 
+        if oracle.emergency_halt:
+            continue
+
         market = oracle.active_market
         if market is None:
             continue

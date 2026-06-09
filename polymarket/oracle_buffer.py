@@ -104,6 +104,11 @@ class OracleBuffer:
     # M12: active price source for dashboard
     active_price_source: str = "none"
 
+    # Emergency kill switch — set True to stop all order submission immediately.
+    # Feeds, resolve, and redeem loops continue running so existing positions
+    # are settled correctly. Set False to resume trading.
+    emergency_halt: bool = False
+
     def window_seconds_remaining(self) -> float:
         if self.active_market is None:
             return 0.0

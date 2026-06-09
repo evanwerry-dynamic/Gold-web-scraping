@@ -69,6 +69,11 @@ async def _process_order(
     oracle: OracleBuffer,
     risk_mgr: RiskManager,
 ) -> None:
+    # Emergency halt — drop all incoming orders immediately
+    if oracle.emergency_halt:
+        log.info(f"[OMS] Order dropped — emergency halt active ({intent.get('strategy')})")
+        return
+
     # H12: discard stale orders older than 8s
     age = time.time() - intent.get("queued_at", time.time())
     if age > 8.0:

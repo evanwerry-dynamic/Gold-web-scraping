@@ -1,8 +1,24 @@
 "use client";
-import { usePnlStore } from "@/store";
+import { useState } from "react";
+import { usePnlStore, useHealthStore } from "@/store";
 
 export function PnLHeader() {
   const pnl = usePnlStore((s) => s.pnl);
+  const halted = useHealthStore((s) => s.health.halted);
+  const [toggling, setToggling] = useState(false);
+
+  async function toggleHalt() {
+    if (toggling) return;
+    setToggling(true);
+    try {
+      const endpoint = halted ? "/resume" : "/halt";
+      await fetch(endpoint, { method: "POST" });
+    } catch {
+      // Bridge will push updated halt status via health event
+    } finally {
+      setToggling(false);
+    }
+  }
 
   const todaySign = pnl.today >= 0 ? "+" : "";
   const todayColor = pnl.today >= 0 ? "#00ff88" : "#ff4466";
@@ -57,10 +73,40 @@ export function PnLHeader() {
         </span>
       </div>
 
-      {/* Live dot */}
-      <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
-        <span className="live-dot" style={{ width: 6, height: 6, borderRadius: "50%", background: "#00ff88", display: "inline-block" }} />
-        <span style={{ color: "#bbb", fontSize: 10 }}>LIVE</span>
+      {/* HALT / RESUME button */}
+      <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
+        <button
+          onClick={toggleHalt}
+          disabled={toggling}
+          style={{
+            padding: "4px 14px",
+            fontSize: 11,
+            fontWeight: 700,
+            letterSpacing: "0.1em",
+            border: "1px solid",
+            borderRadius: 3,
+            cursor: toggling ? "wait" : "pointer",
+            background: halted ? "#ff4466" : "transparent",
+            borderColor: halted ? "#ff4466" : "#444",
+            color: halted ? "#fff" : "#888",
+            transition: "all 0.15s",
+          }}
+        >
+          {halted ? "⏸ HALTED — CLICK TO RESUME" : "HALT"}
+        </button>
+
+        {/* Live dot */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span
+            className="live-dot"
+            style={{
+              width: 6, height: 6, borderRadius: "50%",
+              background: halted ? "#ff4466" : "#00ff88",
+              display: "inline-block",
+            }}
+          />
+          <span style={{ color: "#bbb", fontSize: 10 }}>{halted ? "HALTED" : "LIVE"}</span>
+        </div>
       </div>
     </div>
   );

@@ -45,6 +45,10 @@ async def signal_loop(
     while True:
         await asyncio.sleep(SCAN_INTERVAL)
 
+        if oracle.emergency_halt:
+            oracle.strategy_phase = "HALT"
+            continue
+
         # H3: read live calibrated parameters each iteration
         MIN_DELTA = LIVE_PARAMS.get("min_delta_threshold", _MIN_DELTA_DEFAULT)
         MIN_EDGE_NET = LIVE_PARAMS.get("min_edge_net", _MIN_EDGE_NET_DEFAULT)

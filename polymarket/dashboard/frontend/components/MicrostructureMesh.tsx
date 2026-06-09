@@ -25,6 +25,26 @@ export function MicrostructureMesh() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || trades.length === 0) return;
+
+    // Component remounted (tab switch) with existing store data — seed all at once
+    // instead of waiting for new trades to trickle in one by one.
+    if (nodesRef.current.length === 0) {
+      const w = canvas.width || 400;
+      const h = canvas.height || 300;
+      nodesRef.current = trades.slice(0, 80).map((t) => ({
+        id: t.id,
+        x: Math.random() * w,
+        y: Math.random() * h,
+        vx: (Math.random() - 0.5) * 1.5,
+        vy: (Math.random() - 0.5) * 1.5,
+        size: Math.max(4, Math.min(20, Math.abs(t.dollar_size / 10))),
+        color: t.pnl === null ? "#888888" : t.pnl >= 0 ? "#00ff88" : "#ff4466",
+        pnl: t.pnl ?? 0,
+      }));
+      lastTradeIdRef.current = trades[0].id;
+      return;
+    }
+
     const latest = trades[0];
     // pnl update for existing trade — recolor its node
     if (latest.id === lastTradeIdRef.current) {

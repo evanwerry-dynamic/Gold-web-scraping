@@ -221,10 +221,12 @@ def _resolve_previous_window(oracle: OracleBuffer) -> None:
         pos.resolution = 1.0 if won else 0.0
         pos.resolved   = True
         resolved_count += 1
-        outcome = "WON" if won else "LOST"
+        outcome = "WON ✓" if won else "LOST ✗"
+        pct_move = (final_price - open_price) / open_price * 100 if open_price else 0
         log.info(
-            f"[resolve] {pos.market_id} {pos.side} {outcome} "
-            f"(BTC {open_price:.2f}→{final_price:.2f})"
+            f"[resolve] {pos.market_id} {pos.side} {outcome} | "
+            f"window: {open_price:.2f}→{final_price:.2f} ({pct_move:+.3f}%) | "
+            f"cost=${pos.cost_basis:.2f} payout=${pos.shares * pos.resolution:.2f}"
         )
 
     if resolved_count:

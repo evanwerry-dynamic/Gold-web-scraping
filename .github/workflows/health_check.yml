@@ -1,0 +1,47 @@
+name: System Health Check
+
+on:
+  schedule:
+    - cron: "0 */2 * * *"   # every 2 hours
+  workflow_dispatch:         # allow manual trigger
+
+jobs:
+  unit-tests:
+    name: Core logic unit tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install test dependencies
+        run: pip install numpy scipy pytest
+
+      - name: Run tests
+        run: python -m pytest tests/ -v --tb=short
+
+  live-health:
+    name: Railway deployment health
+    runs-on: ubuntu-latest
+    # Don't block on unit tests — run both in parallel and get independent signals
+    needs: []
+
+    steps:
+      - name: Ping /health endpoint
+        id: ping
+        run: |
+          STATUS=$(curl -sf --max-time 10 \
+            https://gold-web-scraping-production.up.railway.app/health \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status','?'))")
+          echo "status=$STATUS" >> "$GITHUB_OUTPUT"
+          echo "Railway /health returned: $STATUS"
+
+      - name: Fail if deployment is unhealthy
+        if: steps.ping.outputs.status != 'ok'
+        run: |
+          echo "::error::Railway bot returned status='${{ steps.ping.outputs.status }}' — expected 'ok'"
+          exit 1

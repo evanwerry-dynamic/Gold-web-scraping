@@ -6,6 +6,7 @@ P&L) to disk every 30s. On restart, main.py reloads this state.
 """
 import asyncio
 import logging
+import time
 
 from polymarket.oracle_buffer import OracleBuffer
 from polymarket.data import save_state, load_state
@@ -36,7 +37,8 @@ async def persist_loop(oracle: OracleBuffer) -> None:
                         "resolved": p.resolved,
                         "resolution": p.resolution,
                         "redeemed": p.redeemed,
-                        "window_open_price": p.window_open_price,
+                        # M7: skip window_open_price=0.0 — binance_ws backfill handles it
+                        "window_open_price": p.window_open_price if p.window_open_price else None,
                     }
                     for oid, p in oracle.open_positions.items()
                 },
@@ -74,7 +76,29 @@ def restore_state(oracle: OracleBuffer) -> None:
         if datetime.fromisoformat(t.get("timestamp", "1970-01-01")).timestamp() >= today_start
     )
 
+    now = time.time()
+    TWENTY_FOUR_HOURS = 86400.0
+    skipped = 0
     for oid, p in state.get("open_positions", {}).items():
+        # M10: skip positions older than 24h that haven't been redeemed.
+        # Paper positions embed the window timestamp in the market_id.
+        # For live positions without a timestamp, we restore conservatively.
+        is_old = False
+        market_id_str = p.get("market_id", "")
+        if market_id_str.startswith("paper-btc-5m-"):
+            try:
+                window_ts = float(market_id_str.split("-")[-1])
+                if now - window_ts > TWENTY_FOUR_HOURS and not p.get("redeemed", False):
+                    log.warning(
+                        f"Skipping stale restored position {oid} "
+                        f"(market {market_id_str}, >24h old)"
+                    )
+                    is_old = True
+                    skipped += 1
+            except (ValueError, IndexError):
+                pass
+        if is_old:
+            continue
         oracle.open_positions[oid] = OpenPosition(
             market_id=p["market_id"],
             condition_id=p["condition_id"],
@@ -85,9 +109,10 @@ def restore_state(oracle: OracleBuffer) -> None:
             resolved=p.get("resolved", False),
             resolution=p.get("resolution", 0.0),
             redeemed=p.get("redeemed", False),
-            window_open_price=p.get("window_open_price", 0.0),
+            # M7: treat None/0 window_open_price as 0.0 — backfilled by binance_ws
+            window_open_price=p.get("window_open_price") or 0.0,
         )
     log.info(
         f"State restored: bankroll={oracle.bankroll:.2f}, "
-        f"positions={len(oracle.open_positions)}"
+        f"positions={len(oracle.open_positions)} ({skipped} stale skipped)"
     )

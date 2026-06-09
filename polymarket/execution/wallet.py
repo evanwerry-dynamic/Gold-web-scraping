@@ -90,6 +90,35 @@ async def get_pusd_balance() -> float:
         return 0.0
 
 
+async def get_pusd_allowance() -> float:
+    """Return pUSD spending allowance granted to CTF Exchange V2 (6 decimals).
+    L1: check allowance, not balance, for the approve guard in sanity_loop.
+    """
+    try:
+        from web3 import Web3
+        rpc = os.getenv("POLYGON_RPC_PRIMARY", "https://polygon-rpc.com")
+        w3 = Web3(Web3.HTTPProvider(rpc))
+        pk = os.getenv("POLYGON_PRIVATE_KEY", "")
+        if not pk:
+            return 0.0
+        acct = w3.eth.account.from_key(pk)
+        # Minimal ERC-20 ABI for allowance
+        abi = [{"inputs": [{"name": "owner", "type": "address"},
+                            {"name": "spender", "type": "address"}],
+                "name": "allowance", "outputs": [{"name": "", "type": "uint256"}],
+                "stateMutability": "view", "type": "function"}]
+        contract = w3.eth.contract(
+            address=Web3.to_checksum_address(PUSD_ADDRESS), abi=abi
+        )
+        raw = contract.functions.allowance(
+            acct.address, Web3.to_checksum_address(CTF_EXCHANGE_V2)
+        ).call()
+        return raw / 1e6  # 6 decimals
+    except Exception as exc:
+        log.warning(f"pUSD allowance check failed: {exc!r}")
+        return 0.0
+
+
 async def approve_pusd(amount_usd: float) -> None:
     """Approve CTF Exchange V2 to spend up to `amount_usd` pUSD.
 

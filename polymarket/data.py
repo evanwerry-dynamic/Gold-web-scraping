@@ -93,6 +93,7 @@ def save_trades(trades: list[dict]) -> None:
 
 def append_trade(trade: dict) -> dict:
     """Append a trade record with UTC timestamp. Returns the saved record."""
+    global _db_ready
     record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         **trade,
@@ -104,6 +105,7 @@ def append_trade(trade: dict) -> dict:
             return record
         except Exception as exc:
             log.warning(f"DB append_trade failed, falling back to file: {exc!r}")
+            _db_ready = False  # M4: trigger 30s retry
     trades = _load_trades_file()
     trades.append(record)
     _save_trades_file(trades)
@@ -112,12 +114,14 @@ def append_trade(trade: dict) -> dict:
 
 def load_trade_history(days: int | None = None) -> list[dict]:
     """Load trades, optionally filtered to the last N days."""
+    global _db_ready
     if _use_db():
         try:
             from polymarket import db
             return db.load_trades(days=days)
         except Exception as exc:
             log.warning(f"DB load_trade_history failed, using file: {exc!r}")
+            _db_ready = False  # M4: trigger 30s retry
     trades = _load_trades_file()
     if days is None:
         return trades
@@ -130,6 +134,7 @@ def load_trade_history(days: int | None = None) -> list[dict]:
 
 def save_state(state: dict) -> None:
     """Persist bot state for crash recovery."""
+    global _db_ready
     if _use_db():
         try:
             from polymarket import db
@@ -137,6 +142,7 @@ def save_state(state: dict) -> None:
             return
         except Exception as exc:
             log.warning(f"DB save_state failed, using file: {exc!r}")
+            _db_ready = False  # M4: trigger 30s retry
     _save_state_file(state)
 
 

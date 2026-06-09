@@ -69,6 +69,7 @@ async def _broadcast_health(oracle: OracleBuffer) -> None:
         "ws_clob": (now - oracle.last_clob_ts) < 60,
         "open_positions": len(oracle.open_positions),
         "strategy_phase": oracle.strategy_phase,
+        "active_price_source": oracle.active_price_source,  # M12
     }
     # Only include btc_price when the bot has a real price — avoids overwriting
     # the standalone Kraken feed's price with 0 at startup

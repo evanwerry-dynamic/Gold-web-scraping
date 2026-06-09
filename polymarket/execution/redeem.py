@@ -44,7 +44,9 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
                         pos.condition_id, pos.token_id, pos.shares,
                         pos.side, oracle.paper_trading,
                     )
-                    oracle.bankroll += payout
+                    # C3/H10: protect bankroll mutation with lock
+                    async with oracle.bankroll_lock:
+                        oracle.bankroll += payout
 
                 # Only mark redeemed after on-chain call succeeds (or paper sim).
                 # Setting this before the call would suppress retries if the
@@ -88,10 +90,11 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
                     "dollar_size": pos.cost_basis,
                     "pnl": round(final_pnl, 2),
                     "paper": oracle.paper_trading,
-                    "timestamp": datetime.datetime.utcnow().isoformat(),
+                    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 })
-                # Remove from open_positions — redeemed, no longer relevant
-                oracle.open_positions.pop(order_id, None)
+                # C3/H10: protect open_positions mutation with lock
+                async with oracle.bankroll_lock:
+                    oracle.open_positions.pop(order_id, None)
                 log.info(
                     f"Redeemed {pos.market_id}: {pos.shares:.2f}sh "
                     f"→ {payout:.2f} pUSD (pnl={final_pnl:+.2f})"

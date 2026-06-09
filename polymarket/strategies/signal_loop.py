@@ -19,12 +19,15 @@ import time
 from polymarket.fair_value import fair_value_binary, should_trade
 from polymarket.oracle_buffer import OracleBuffer
 from polymarket.risk import RiskManager, kelly_size
+# H3: import LIVE_PARAMS so calibrator updates are picked up at runtime
+from polymarket.calibrator import LIVE_PARAMS
 
 log = logging.getLogger(__name__)
 
-ENTRY_WINDOW_SECONDS = float(os.getenv("ENTRY_SECONDS_BEFORE_CLOSE", "10"))
-MIN_DELTA = float(os.getenv("MIN_DELTA_THRESHOLD", "0.001"))     # 0.10%
-MIN_EDGE_NET = float(os.getenv("MIN_EDGE_NET", "0.05"))           # 5¢
+# Env-var defaults for initial startup (overridden by LIVE_PARAMS at runtime)
+_ENTRY_WINDOW_SECONDS_DEFAULT = float(os.getenv("ENTRY_SECONDS_BEFORE_CLOSE", "10"))
+_MIN_DELTA_DEFAULT = float(os.getenv("MIN_DELTA_THRESHOLD", "0.001"))
+_MIN_EDGE_NET_DEFAULT = float(os.getenv("MIN_EDGE_NET", "0.05"))
 SCAN_INTERVAL = 2.0  # seconds between signal evaluations
 
 
@@ -41,6 +44,11 @@ async def signal_loop(
 
     while True:
         await asyncio.sleep(SCAN_INTERVAL)
+
+        # H3: read live calibrated parameters each iteration
+        MIN_DELTA = LIVE_PARAMS.get("min_delta_threshold", _MIN_DELTA_DEFAULT)
+        MIN_EDGE_NET = LIVE_PARAMS.get("min_edge_net", _MIN_EDGE_NET_DEFAULT)
+        ENTRY_WINDOW_SECONDS = LIVE_PARAMS.get("entry_seconds_before_close", _ENTRY_WINDOW_SECONDS_DEFAULT)
 
         market = oracle.active_market
         if market is None:

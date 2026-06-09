@@ -61,6 +61,7 @@ async def binance_ws_loop(oracle: OracleBuffer) -> None:
                         oracle.vol_estimator.update(price)
                         oracle.last_binance_ts = time.time()
                         oracle.price_ready.set()
+                        oracle.active_price_source = "binance"  # M12
 
                         market = oracle.active_market
                         if market and not market.window_open_price:
@@ -120,6 +121,7 @@ async def _kraken_ws_loop(oracle: OracleBuffer) -> None:
                     oracle.btc_price = price
                     oracle.last_binance_ts = time.time()
                     oracle.price_ready.set()
+                    oracle.active_price_source = "kraken"  # M12
 
                     # Only feed vol estimator once per second — multiple ticks/s
                     # would fill the 30-sample window in seconds, measuring noise
@@ -141,8 +143,10 @@ async def _coingecko_rest_loop(oracle: OracleBuffer) -> None:
     """
     Last-resort feed: CoinGecko REST every 3s.
     Only activates if BOTH Binance and Kraken WebSockets are down.
+    M3: vol_estimator throttled to 1s cadence (same as Kraken fallback).
     """
     KRAKEN_GRACE = FRESHNESS_TIMEOUT + 10  # give Kraken time to connect first
+    _last_vol_ts: float = 0.0
     while True:
         await asyncio.sleep(3)
         if time.time() - oracle.last_binance_ts < KRAKEN_GRACE:
@@ -155,8 +159,14 @@ async def _coingecko_rest_loop(oracle: OracleBuffer) -> None:
             )
             price = float(resp["bitcoin"]["usd"])
             oracle.btc_price = price
-            oracle.vol_estimator.update(price)
             oracle.last_binance_ts = time.time()
+            oracle.price_ready.set()
+            oracle.active_price_source = "coingecko"  # M12
+            # M3: throttle vol_estimator to 1s cadence
+            now = time.time()
+            if now - _last_vol_ts >= 1.0:
+                oracle.vol_estimator.update(price)
+                _last_vol_ts = now
             log.info(f"CoinGecko last-resort: BTC=${price:,.2f}")
         except Exception as exc:
             log.warning(f"CoinGecko error: {exc!r}")

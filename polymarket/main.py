@@ -94,7 +94,7 @@ async def run() -> None:
             log.warning(f"P&L bootstrap failed: {exc!r}")
 
     risk_mgr = RiskManager(bankroll=oracle.bankroll)
-    order_queue: asyncio.Queue = asyncio.Queue()
+    order_queue: asyncio.Queue = asyncio.Queue(maxsize=10)  # M11: cap queue at 10
 
     # Warn clearly if running without a database — Railway redeploys wipe the
     # ephemeral filesystem, so all trades and bankroll are lost on every deploy.
@@ -128,7 +128,27 @@ async def run() -> None:
         _guard(lambda: persist_loop(oracle),                       "persist_loop"),
         _guard(lambda: calibrator_loop(),                          "calibrator"),
         _guard(lambda: _dashboard_broadcast(oracle),               "dashboard_broadcast"),
+        _guard(lambda: _midnight_reset_loop(oracle, risk_mgr),     "midnight_reset"),
     )
+
+
+async def _midnight_reset_loop(oracle, risk_mgr) -> None:
+    """M1: Reset today_pnl and daily loss limit at UTC midnight. Never exits."""
+    from datetime import datetime, timezone, timedelta
+
+    while True:
+        now = datetime.now(timezone.utc)
+        # Compute seconds until next UTC midnight
+        next_midnight = (now + timedelta(days=1)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        secs_until_midnight = (next_midnight - now).total_seconds()
+        log.info(f"Midnight reset scheduled in {secs_until_midnight:.0f}s")
+        await asyncio.sleep(secs_until_midnight)
+        # Reset daily stats
+        oracle.today_pnl = 0.0
+        risk_mgr.reset_daily(oracle.bankroll)
+        log.info(f"UTC midnight reset: today_pnl=0, daily_start={oracle.bankroll:.2f}")
 
 
 async def _dashboard_broadcast(oracle) -> None:

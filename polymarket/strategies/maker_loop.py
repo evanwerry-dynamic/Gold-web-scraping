@@ -45,6 +45,15 @@ async def maker_loop(
 
         secs_left = oracle.window_seconds_remaining()
 
+        # M5: skip quoting when orderbook data is stale (>10s without book update)
+        if (market.last_book_update_ts > 0
+                and time.time() - market.last_book_update_ts > 10):
+            log.warning(
+                f"[B] Skipping quote — orderbook data stale "
+                f"({time.time() - market.last_book_update_ts:.0f}s since last update)"
+            )
+            continue
+
         # Pull all quotes in the informed window (T-30s to close)
         if secs_left < INFORMED_WINDOW_SECS:
             if active_quote_ids:

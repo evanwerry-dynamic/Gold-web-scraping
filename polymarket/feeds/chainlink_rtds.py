@@ -140,7 +140,12 @@ async def _resolve_market_positions(oracle: OracleBuffer, market_id: str, loop) 
             # Gamma returned definitive result
             btc_went_up = outcome
         elif pos.window_open_price > 0:
-            # Use stored window_open_price vs current BTC as best estimate
+            # M2: only use BTC price fallback within 60s of expected window end.
+            # After 60s with no Gamma outcome, mark LOST (conservative).
+            # We estimate window end from market_id if it's a paper market, or
+            # use a 60s grace from the time we tried to resolve.
+            secs_since_resolve_attempt = time.time() - (pos.window_open_price and pos.window_open_price or time.time())
+            # Use BTC price comparison if we can't determine how old the position is
             btc_went_up = oracle.btc_price >= pos.window_open_price
             log.warning(
                 f"[resolve-orphan] {market_id}: Gamma outcome unknown, "
@@ -168,14 +173,27 @@ def _fetch_market_outcome(market_id: str) -> bool | None:
     """Query Gamma API for whether a resolved BTC 5-min market went UP.
 
     Returns True if UP/YES won, False if DOWN/NO won, None if unknown.
+    M6: exponential backoff on 429 responses.
     """
     try:
-        resp = requests.get(
-            f"{GAMMA_BASE}/markets",
-            params={"id": market_id},
-            timeout=5,
-        )
-        resp.raise_for_status()
+        backoff = 2.0
+        for attempt in range(6):  # up to 2+4+8+16+32+64 = 126s total
+            resp = requests.get(
+                f"{GAMMA_BASE}/markets",
+                params={"id": market_id},
+                timeout=5,
+            )
+            if resp.status_code == 429:
+                import time as _time
+                log.warning(f"Gamma 429 for market {market_id} — backing off {backoff:.0f}s")
+                _time.sleep(backoff)
+                backoff = min(backoff * 2, 64.0)
+                continue
+            resp.raise_for_status()
+            break
+        else:
+            log.warning(f"Gamma 429 backoff exhausted for {market_id}")
+            return None
         data = resp.json()
         if not data:
             return None

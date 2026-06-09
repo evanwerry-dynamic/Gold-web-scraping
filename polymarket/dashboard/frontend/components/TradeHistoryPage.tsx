@@ -60,6 +60,8 @@ export function TradeHistoryPage() {
   const worstTrade = closed.length > 0 ? Math.min(...closed.map((t) => t.pnl ?? 0)) : null;
   const totalVolume = trades.reduce((s, t) => s + (t.dollar_size ?? 0), 0);
 
+  const totalPnl = closed.reduce((s, t) => s + (t.pnl ?? 0), 0);
+
   // ── Cumulative P&L series ────────────────────────────────────────────────────
   const sorted = [...trades].sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),

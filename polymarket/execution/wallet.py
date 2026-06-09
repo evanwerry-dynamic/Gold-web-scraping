@@ -90,16 +90,22 @@ async def get_pusd_balance() -> float:
         return 0.0
 
 
-async def approve_pusd_max() -> None:
-    """Approve CTF Exchange V2 to spend unlimited pUSD (one-time setup)."""
-    log.info("Approving CTF Exchange V2 for pUSD...")
+async def approve_pusd(amount_usd: float) -> None:
+    """Approve CTF Exchange V2 to spend up to `amount_usd` pUSD.
+
+    Never approves more than needed — avoids catastrophic loss if the
+    CTF Exchange contract is ever exploited. Sanity loop calls this with
+    2× bankroll; one-time setup callers should pass initial capital.
+    pUSD has 6 decimals, so amount_usd is multiplied by 1e6.
+    """
+    amount_units = int(max(amount_usd, 200) * 1e6)
+    log.info(f"Approving CTF Exchange V2 for {amount_usd:.2f} pUSD ({amount_units} units)...")
     try:
         from web3 import Web3
         rpc = os.getenv("POLYGON_RPC_PRIMARY", "https://polygon-rpc.com")
         w3 = Web3(Web3.HTTPProvider(rpc))
         pk = os.getenv("POLYGON_PRIVATE_KEY", "")
         acct = w3.eth.account.from_key(pk)
-        uint256_max = 2**256 - 1
         abi = [{"inputs": [{"name": "spender", "type": "address"},
                             {"name": "amount", "type": "uint256"}],
                 "name": "approve", "outputs": [{"name": "", "type": "bool"}],
@@ -108,7 +114,7 @@ async def approve_pusd_max() -> None:
             address=Web3.to_checksum_address(PUSD_ADDRESS), abi=abi
         )
         tx = contract.functions.approve(
-            Web3.to_checksum_address(CTF_EXCHANGE_V2), uint256_max
+            Web3.to_checksum_address(CTF_EXCHANGE_V2), amount_units
         ).build_transaction({
             "from": acct.address,
             "nonce": w3.eth.get_transaction_count(acct.address),

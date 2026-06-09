@@ -1,4 +1,5 @@
 """Shared in-memory state written by WebSocket feeds, read by strategy loops."""
+import asyncio
 import time
 from dataclasses import dataclass, field
 from collections import deque
@@ -81,6 +82,9 @@ class OracleBuffer:
 
     # Paper trading flag
     paper_trading: bool = True
+
+    # Startup barrier: set by the first price feed message, waited on by strategies
+    price_ready: asyncio.Event = field(default_factory=asyncio.Event)
 
     # Dashboard event queue — OMS pushes trade dicts here, bridge drains them
     pending_trade_events: deque = field(default_factory=deque)

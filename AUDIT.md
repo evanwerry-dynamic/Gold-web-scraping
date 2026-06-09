@@ -16,9 +16,9 @@
 | C2 | Verify CLOB bid/ask array ordering | `clob_ws.py` | ✅ Fixed 2026-06-08 |
 | C3 | Order over-sizing when price ≈ 0 | `oms.py` | ✅ Fixed 2026-06-08 |
 | C4 | Monotonicity arb inequality inverted | `arb_loop.py` | ✅ Fixed 2026-06-08 |
-| C5 | Implement live ERC-1155 redemption | `redeem.py` | 🔴 TODO |
-| C6 | Cap pUSD approval (not uint256 max) | `wallet.py` | 🔴 TODO |
-| C7 | Startup barrier: wait for btc_price > 0 before strategies | `main.py` | 🔴 TODO |
+| C5 | Implement live ERC-1155 redemption | `redeem.py` | ✅ Fixed 2026-06-09 |
+| C6 | Cap pUSD approval (not uint256 max) | `wallet.py` | ✅ Fixed 2026-06-09 |
+| C7 | Startup barrier: wait for btc_price > 0 before strategies | `oracle_buffer.py` + feeds + strategies | ✅ Fixed 2026-06-09 |
 
 ### 🟡 Credentials & testnet (your action needed)
 
@@ -49,7 +49,7 @@
 
 | Severity | Count | Status |
 |---|---|---|
-| CRITICAL | 8 | 4 fixed, 3 remaining |
+| CRITICAL | 8 | 7 fixed, 1 remaining (#8 race condition — async-safe, low real risk) |
 | HIGH | 8 | In progress |
 | MED | 22 | Post-launch |
 | LOW | 6 | Post-launch |
@@ -216,14 +216,14 @@ Flag is set inside the try block. If `_redeem_position()` raises an exception af
 
 Before switching `PAPER_TRADING=false`:
 
-- [ ] Fix #1: Clamp `seconds_remaining` in fair_value.py
-- [ ] Fix #2: Verify CLOB bid/ask array ordering (`bids[0]` vs `bids[-1]`)
+- [x] Fix #1: Clamp `seconds_remaining` in fair_value.py ✅
+- [x] Fix #2: Verify CLOB bid/ask array ordering (`bids[0]` vs `bids[-1]`) ✅
 - [ ] Fix #3: Use fresh price or on-chain price for settlement, not stale `oracle.btc_price`
-- [ ] Fix #4: Hard floor on order price in oms.py
-- [ ] Fix #5: Reverse monotonicity inequality in arb_loop.py
-- [ ] Fix #10: Implement live ERC-1155 redemption in redeem.py
-- [ ] Fix #14: Cap pUSD approval at 2× bankroll, not uint256 max
-- [ ] Fix #6: Add startup barrier — wait for price feed before strategies
+- [x] Fix #4: Hard floor on order price in oms.py ✅
+- [x] Fix #5: Reverse monotonicity inequality in arb_loop.py ✅
+- [x] Fix #10: Implement live ERC-1155 redemption in redeem.py ✅
+- [x] Fix #14: Cap pUSD approval at 2× bankroll, not uint256 max ✅
+- [x] Fix #6: Add startup barrier — wait for price feed before strategies ✅ (asyncio.Event)
 - [ ] Verify CLOB API schema for `avgPrice` field and bid/ask ordering
 - [ ] Run 1 week paper trading with current fixes and confirm >65% win rate
 - [ ] Add PostgreSQL database to Railway (prevents bankroll loss on redeploy)

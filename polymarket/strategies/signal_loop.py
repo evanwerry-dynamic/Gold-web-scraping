@@ -34,7 +34,9 @@ async def signal_loop(
     risk_mgr: RiskManager,
 ) -> None:
     """Strategy A signal evaluation. Never exits."""
-    log.info("Strategy A (late-window momentum) starting...")
+    log.info("Strategy A (late-window momentum) starting — waiting for price feed...")
+    await oracle.price_ready.wait()
+    log.info("Strategy A: price feed ready, entering signal loop")
     last_fired_window: str | None = None
 
     while True:

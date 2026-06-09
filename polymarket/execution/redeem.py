@@ -8,7 +8,9 @@ Without this loop the bot's bankroll calculation drifts wrong.
 Runs every 30s, scans open_positions for resolved+unredeemed entries.
 """
 import asyncio
+import datetime
 import logging
+import os
 from typing import TYPE_CHECKING
 
 from polymarket.oracle_buffer import OracleBuffer
@@ -38,27 +40,27 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
             try:
                 payout = pos.shares * pos.resolution  # resolution=1.0 → won
                 if payout > 0:
-                    await _redeem_position(pos.condition_id, pos.token_id, pos.shares)
+                    await _redeem_position(
+                        pos.condition_id, pos.token_id, pos.shares,
+                        pos.side, oracle.paper_trading,
+                    )
                     oracle.bankroll += payout
 
+                # Only mark redeemed after on-chain call succeeds (or paper sim).
+                # Setting this before the call would suppress retries if the
+                # redemption tx reverts.
                 pos.redeemed = True
                 final_pnl = payout - pos.cost_basis
 
-                # Update running P&L totals so the dashboard header is correct
                 oracle.total_pnl += final_pnl
                 oracle.today_pnl += final_pnl
 
-                # Feed result into risk manager so streak/velocity circuit breakers work
+                # Feed result into risk manager so loss-streak and velocity
+                # circuit breakers see actual settlements, not just paper sims.
                 if risk_mgr is not None:
                     risk_mgr.on_trade_result(final_pnl)
 
                 entry_price = pos.cost_basis / pos.shares if pos.shares > 0 else 0.0
-                btc_open   = pos.window_open_price
-                btc_settle = pos.settlement_price
-                btc_delta_pct = (
-                    (btc_settle - btc_open) / btc_open * 100
-                    if btc_open > 0 and btc_settle > 0 else None
-                )
                 redeem_record = {
                     "order_id": order_id,
                     "action": "redeem",
@@ -71,14 +73,10 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
                     "resolution": pos.resolution,
                     "payout": payout,
                     "pnl": final_pnl,
-                    "paper": True,
-                    "btc_open": btc_open,
-                    "btc_settle": btc_settle,
-                    "btc_delta_pct": btc_delta_pct,
+                    "paper": oracle.paper_trading,
                 }
                 await asyncio.get_running_loop().run_in_executor(None, append_trade, redeem_record)
                 # Same id as the open event — frontend store upserts (pnl: null → value)
-                import datetime
                 oracle.pending_trade_events.append({
                     "id": order_id,
                     "market_id": pos.market_id,
@@ -89,11 +87,8 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
                     "edge": 0.0,
                     "dollar_size": pos.cost_basis,
                     "pnl": round(final_pnl, 2),
-                    "paper": True,
+                    "paper": oracle.paper_trading,
                     "timestamp": datetime.datetime.utcnow().isoformat(),
-                    "btc_open": btc_open if btc_open else None,
-                    "btc_settle": btc_settle if btc_settle else None,
-                    "btc_delta_pct": round(btc_delta_pct, 3) if btc_delta_pct is not None else None,
                 })
                 # Remove from open_positions — redeemed, no longer relevant
                 oracle.open_positions.pop(order_id, None)
@@ -105,14 +100,73 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
                 log.error(f"Redemption failed for {pos.market_id}: {exc!r}")
 
 
-async def _redeem_position(condition_id: str, token_id: str, shares: float) -> None:
-    """Call CTF Exchange redeemPositions on Polygon."""
-    import os
-    if os.getenv("PAPER_TRADING", "true").lower() == "true":
+async def _redeem_position(
+    condition_id: str,
+    token_id: str,
+    shares: float,
+    side: str = "YES",
+    paper: bool = True,
+) -> None:
+    """Call CTF Exchange V2 redeemPositions on Polygon."""
+    if paper:
         log.info(f"[paper] Simulating redemption: {condition_id} {shares:.2f}sh")
         return
-    # Live redemption via web3 CTF Exchange contract
-    # Requires: redeemPositions(collateral, parentCollectionId, conditionId, indexSets)
-    raise NotImplementedError(
-        "Live redemption requires wallet setup. Run with PAPER_TRADING=true first."
+
+    from web3 import Web3
+    from polymarket.execution.wallet import PUSD_ADDRESS, CTF_EXCHANGE_V2
+
+    rpc = os.getenv("POLYGON_RPC_PRIMARY", "https://polygon-rpc.com")
+    pk = os.getenv("POLYGON_PRIVATE_KEY", "")
+    if not pk:
+        raise EnvironmentError("POLYGON_PRIVATE_KEY required for live redemption")
+
+    w3 = Web3(Web3.HTTPProvider(rpc))
+    acct = w3.eth.account.from_key(pk)
+
+    # Standard Gnosis CTF redeemPositions ABI
+    ctf_abi = [{
+        "inputs": [
+            {"name": "collateralToken", "type": "address"},
+            {"name": "parentCollectionId", "type": "bytes32"},
+            {"name": "conditionId", "type": "bytes32"},
+            {"name": "indexSets", "type": "uint256[]"},
+        ],
+        "name": "redeemPositions",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function",
+    }]
+
+    contract = w3.eth.contract(
+        address=Web3.to_checksum_address(CTF_EXCHANGE_V2), abi=ctf_abi
     )
+
+    # Binary markets: YES = 0b01 = index 1, NO = 0b10 = index 2
+    index_set = 1 if side in ("YES", "UP") else 2
+    cid_hex = condition_id.replace("0x", "").zfill(64)
+    condition_bytes = bytes.fromhex(cid_hex)
+
+    tx = contract.functions.redeemPositions(
+        Web3.to_checksum_address(PUSD_ADDRESS),
+        b"\x00" * 32,   # parentCollectionId = 0 for simple (non-nested) conditions
+        condition_bytes,
+        [index_set],
+    ).build_transaction({
+        "from": acct.address,
+        "nonce": w3.eth.get_transaction_count(acct.address),
+        "gas": 200_000,
+    })
+
+    signed = w3.eth.account.sign_transaction(tx, pk)
+    loop = asyncio.get_running_loop()
+    tx_hash = await loop.run_in_executor(
+        None, lambda: w3.eth.send_raw_transaction(signed.raw_transaction)
+    )
+    receipt = await loop.run_in_executor(
+        None, lambda: w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+    )
+
+    if receipt.status != 1:
+        raise RuntimeError(f"Redemption tx reverted: {tx_hash.hex()}")
+
+    log.info(f"[live] Redeemed {condition_id[:16]}…: {shares:.2f}sh → tx {tx_hash.hex()}")

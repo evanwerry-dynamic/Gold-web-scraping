@@ -60,11 +60,11 @@ async def binance_ws_loop(oracle: OracleBuffer) -> None:
                         oracle.btc_price = price
                         oracle.vol_estimator.update(price)
                         oracle.last_binance_ts = time.time()
+                        oracle.price_ready.set()
 
-                        if oracle.active_market and not getattr(
-                            oracle.active_market, "window_open_price", None
-                        ):
-                            oracle.active_market.window_open_price = price  # type: ignore[attr-defined]
+                        market = oracle.active_market
+                        if market and not market.window_open_price:
+                            market.window_open_price = price
 
             except Exception as exc:
                 log.warning(f"Binance WS error: {exc!r} — retrying in 5s (Kraken fallback active)")
@@ -119,6 +119,7 @@ async def _kraken_ws_loop(oracle: OracleBuffer) -> None:
 
                     oracle.btc_price = price
                     oracle.last_binance_ts = time.time()
+                    oracle.price_ready.set()
 
                     # Only feed vol estimator once per second — multiple ticks/s
                     # would fill the 30-sample window in seconds, measuring noise
@@ -127,10 +128,9 @@ async def _kraken_ws_loop(oracle: OracleBuffer) -> None:
                         oracle.vol_estimator.update(price)
                         _last_vol_ts = now
 
-                    if oracle.active_market and not getattr(
-                        oracle.active_market, "window_open_price", None
-                    ):
-                        oracle.active_market.window_open_price = price  # type: ignore[attr-defined]
+                    market = oracle.active_market
+                    if market and not market.window_open_price:
+                        market.window_open_price = price
 
         except Exception as exc:
             log.warning(f"Kraken WS error: {exc!r} — retrying in 5s")

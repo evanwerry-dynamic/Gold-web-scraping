@@ -31,7 +31,9 @@ async def maker_loop(
     risk_mgr: RiskManager,
 ) -> None:
     """Strategy B market making. Never exits."""
-    log.info("Strategy B (market making) starting...")
+    log.info("Strategy B (market making) starting — waiting for price feed...")
+    await oracle.price_ready.wait()
+    log.info("Strategy B: price feed ready, entering maker loop")
     active_quote_ids: list[str] = []
 
     while True:

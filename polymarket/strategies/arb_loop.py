@@ -34,7 +34,9 @@ async def arb_loop(
     risk_mgr: RiskManager,
 ) -> None:
     """Strategy C arbitrage scanner. Never exits."""
-    log.info("Strategy C (arbitrage) starting...")
+    log.info("Strategy C (arbitrage) starting — waiting for price feed...")
+    await oracle.price_ready.wait()
+    log.info("Strategy C: price feed ready, entering arb loop")
     while True:
         await asyncio.sleep(SCAN_INTERVAL)
 

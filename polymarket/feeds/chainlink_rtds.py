@@ -49,7 +49,7 @@ async def chainlink_rtds_loop(oracle: OracleBuffer) -> None:
                     or oracle.active_market.market_id != market.market_id
                 ):
                     log.info(f"New window: {market.market_id} ends {market.window_end_ts}")
-                    _resolve_previous_window(oracle)
+                    await _resolve_previous_window(oracle, loop)
                     market.window_open_price = oracle.btc_price
                     oracle.active_market = market
             elif oracle.paper_trading:
@@ -61,7 +61,7 @@ async def chainlink_rtds_loop(oracle: OracleBuffer) -> None:
                 ):
                     if oracle.btc_price > 0:
                         log.info(f"Paper window: {market.market_id} (synthetic) open@{oracle.btc_price:.2f}")
-                        _resolve_previous_window(oracle)
+                        await _resolve_previous_window(oracle, loop)
                         oracle.active_market = market
                     else:
                         log.debug("Waiting for BTC price before creating paper window...")
@@ -78,7 +78,7 @@ async def chainlink_rtds_loop(oracle: OracleBuffer) -> None:
             if oracle.paper_trading and oracle.btc_price > 0:
                 market = _synthetic_paper_market(oracle.btc_price)
                 if oracle.active_market is None:
-                    oracle.active_market = market
+                    oracle.active_market = market  # no previous window to resolve
 
         await asyncio.sleep(POLL_INTERVAL)
 
@@ -120,7 +120,7 @@ async def _resolve_expired_window(oracle: OracleBuffer, loop) -> None:
         f"Window {m.market_id} expired {time.time() - m.window_end_ts:.0f}s ago "
         f"with {len(unresolved)} unresolved position(s) — forcing resolution"
     )
-    _resolve_previous_window(oracle)
+    await _resolve_previous_window(oracle, loop)
 
 
 async def _resolve_market_positions(oracle: OracleBuffer, market_id: str, loop) -> None:
@@ -202,34 +202,62 @@ def _fetch_market_outcome(market_id: str) -> bool | None:
         return None
 
 
-def _resolve_previous_window(oracle: OracleBuffer) -> None:
+async def _resolve_previous_window(oracle: OracleBuffer, loop) -> None:
     """Mark open positions from the expiring window as resolved.
 
-    Called the moment a new window is detected. Uses the current BTC price
-    as the settlement price — valid because chainlink_rtds polls every 30s
-    and windows are 300s, so we're within seconds of actual close.
+    Resolution priority:
+    1. Gamma API definitive outcome (outcomePrices from the closed market) — used
+       for real Polymarket markets once Gamma publishes the result.
+    2. BTC price comparison (open_price vs oracle.btc_price) — fallback when
+       Gamma hasn't published yet (30-90s lag) or for synthetic paper markets.
+
+    This makes paper trading use the same code path as live trading: real markets
+    get authoritative outcomes, synthetic paper markets fall through to BTC price.
     """
     prev = oracle.active_market
     if prev is None:
         return
 
-    final_price = oracle.btc_price
-    open_price  = prev.window_open_price or final_price
-    btc_went_up = final_price >= open_price  # ties go to UP (consistent with Polymarket)
+    unresolved = [
+        pos for pos in oracle.open_positions.values()
+        if not pos.resolved and pos.market_id == prev.market_id
+    ]
+    if not unresolved:
+        return
 
+    # Try Gamma API first — returns True/False/None
+    gamma_outcome: bool | None = None
+    if not prev.market_id.startswith("paper-"):
+        gamma_outcome = await loop.run_in_executor(
+            None, _fetch_market_outcome, prev.market_id
+        )
+        if gamma_outcome is not None:
+            log.info(f"[resolve] {prev.market_id}: Gamma outcome → {'UP' if gamma_outcome else 'DOWN'}")
+
+    # Fallback: BTC price comparison
+    if gamma_outcome is None:
+        final_price = oracle.btc_price
+        open_price  = prev.window_open_price or final_price
+        gamma_outcome = final_price >= open_price  # ties go to UP (Polymarket convention)
+        log.info(
+            f"[resolve] {prev.market_id}: Gamma unavailable — "
+            f"using BTC {open_price:.2f}→{final_price:.2f} → {'UP' if gamma_outcome else 'DOWN'}"
+        )
+    else:
+        final_price = oracle.btc_price
+        open_price  = prev.window_open_price or final_price
+
+    btc_went_up = gamma_outcome
     resolved_count = 0
-    for pos in oracle.open_positions.values():
-        if pos.resolved or pos.market_id != prev.market_id:
-            continue
+    for pos in unresolved:
         won = (pos.side in ("UP", "YES")) == btc_went_up
         pos.resolution       = 1.0 if won else 0.0
         pos.resolved         = True
-        pos.settlement_price = final_price   # stored so redeem_loop can write it to history
+        pos.settlement_price = final_price
         resolved_count += 1
-        outcome = "WON ✓" if won else "LOST ✗"
         pct_move = (final_price - open_price) / open_price * 100 if open_price else 0
         log.info(
-            f"[resolve] {pos.market_id} {pos.side} {outcome} | "
+            f"[resolve] {pos.market_id} {pos.side} {'WON ✓' if won else 'LOST ✗'} | "
             f"window: {open_price:.2f}→{final_price:.2f} ({pct_move:+.3f}%) | "
             f"cost=${pos.cost_basis:.2f} payout=${pos.shares * pos.resolution:.2f}"
         )

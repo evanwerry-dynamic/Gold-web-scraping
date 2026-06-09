@@ -218,7 +218,7 @@ Before switching `PAPER_TRADING=false`:
 
 - [x] Fix #1: Clamp `seconds_remaining` in fair_value.py ✅
 - [x] Fix #2: Verify CLOB bid/ask array ordering (`bids[0]` vs `bids[-1]`) ✅
-- [ ] Fix #3: Use fresh price or on-chain price for settlement, not stale `oracle.btc_price`
+- [x] Fix #3: Use Gamma API outcome for settlement; BTC price only as fallback ✅
 - [x] Fix #4: Hard floor on order price in oms.py ✅
 - [x] Fix #5: Reverse monotonicity inequality in arb_loop.py ✅
 - [x] Fix #10: Implement live ERC-1155 redemption in redeem.py ✅

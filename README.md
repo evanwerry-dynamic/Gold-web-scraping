@@ -275,7 +275,13 @@ Gold-web-scraping/
 │       │   └── models.py          # Pydantic event types
 │       └── frontend/              # Next.js 15 + React 19 + Zustand + ECharts
 ├── scraper/                       # Gold price scraper (original project)
-├── tests/                         # 58 unit tests (fair value, risk, oracle)
+├── tests/                         # 66 unit tests (fair value, risk, oracle, resolution)
+│   ├── test_fair_value.py         # Fair value model bounds + symmetry
+│   ├── test_risk.py               # Kelly sizing + all 6 circuit breakers
+│   └── test_oracle.py             # Vol estimator + window delta + resolution logic
+├── .github/workflows/
+│   ├── health_check.yml           # Every 2 hours: 66 tests + integrity checks + Railway ping
+│   └── pages.yml                  # GitHub Pages deploy on main push
 ├── Dockerfile                     # Python 3.11 slim + uvicorn
 ├── docker-compose.yml
 ├── railway.toml
@@ -293,7 +299,7 @@ Gold-web-scraping/
 pip install -r requirements.txt
 cd polymarket/dashboard/frontend && npm install && cd ../../..
 
-# Run all tests (58 tests: fair value, risk, oracle)
+# Run all tests (66 tests: fair value, risk, oracle, resolution logic)
 python -m pytest tests/ -v
 
 # Type-check the frontend

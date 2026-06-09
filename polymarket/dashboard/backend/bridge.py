@@ -103,9 +103,11 @@ async def _broadcast_book(oracle: OracleBuffer) -> None:
 async def _broadcast_positions(oracle: OracleBuffer) -> None:
     """Send every open position to the dashboard every second."""
     m = oracle.active_market
+    active_market_ids: list[str] = []
     for pos in oracle.open_positions.values():
         if pos.resolved:
             continue
+        active_market_ids.append(pos.market_id)
         # Use live bid price if this position is in the current market window.
         # Fall back to entry price (cost_basis / shares) so the position always
         # shows rather than disappearing when the window rotates.
@@ -127,6 +129,13 @@ async def _broadcast_positions(oracle: OracleBuffer) -> None:
             },
         }
         await _connection_manager.broadcast(json.dumps(msg))
+
+    # Tell the frontend exactly which positions are currently open so it can
+    # drop any stale entries without waiting for a full page refresh.
+    await _connection_manager.broadcast(json.dumps({
+        "type": "positions_sync",
+        "data": {"market_ids": active_market_ids},
+    }))
 
 
 async def _drain_trade_events(oracle: OracleBuffer) -> None:

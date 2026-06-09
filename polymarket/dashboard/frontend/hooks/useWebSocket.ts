@@ -63,6 +63,11 @@ function connect() {
         case "position":
           usePositionsStore.getState().update(msg.data as never);
           break;
+        case "positions_sync":
+          usePositionsStore.getState().sync(
+            (msg.data as { market_ids: string[] }).market_ids,
+          );
+          break;
         case "book":
           useBookStore.getState().update(msg.data as never);
           break;

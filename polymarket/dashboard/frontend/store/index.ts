@@ -104,11 +104,23 @@ export const useTradesStore = create<{
 export const usePositionsStore = create<{
   positions: Record<string, Position>;
   update: (p: Position) => void;
+  sync: (marketIds: string[]) => void;
   clear: () => void;
 }>((set) => ({
   positions: {},
   update: (p) =>
     set((s) => ({ positions: { ...s.positions, [p.market_id]: p } })),
+  sync: (marketIds) =>
+    set((s) => {
+      const keep = new Set(marketIds);
+      const next = Object.fromEntries(
+        Object.entries(s.positions).filter(([k]) => keep.has(k)),
+      );
+      // Only trigger a re-render if something actually changed
+      return Object.keys(next).length === Object.keys(s.positions).length
+        ? s
+        : { positions: next };
+    }),
   clear: () => set({ positions: {} }),
 }));
 

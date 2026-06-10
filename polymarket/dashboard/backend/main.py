@@ -158,28 +158,6 @@ async def resume():
     return JSONResponse({"halted": False})
 
 
-@app.post("/halt")
-async def halt():
-    """Activate the emergency kill-switch — blocks all new orders immediately."""
-    oracle = get_oracle()
-    if oracle is None:
-        return JSONResponse({"status": "error", "detail": "Bot not running"}, status_code=503)
-    oracle.emergency_halt = True
-    log.warning("EMERGENCY HALT activated via dashboard")
-    return JSONResponse({"status": "halted"})
-
-
-@app.post("/resume")
-async def resume():
-    """Clear the emergency kill-switch — allows new orders to flow again."""
-    oracle = get_oracle()
-    if oracle is None:
-        return JSONResponse({"status": "error", "detail": "Bot not running"}, status_code=503)
-    oracle.emergency_halt = False
-    log.info("Trading resumed via dashboard")
-    return JSONResponse({"status": "resumed"})
-
-
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await manager.connect(ws)

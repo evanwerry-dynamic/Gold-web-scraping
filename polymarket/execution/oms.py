@@ -35,7 +35,7 @@ GTC_TIMEOUT = 30.0         # seconds before GTC is cancelled
 _filled_order_ids: deque = deque(maxlen=2000)
 
 # Paper friction model: slippage + FOK rejection + fee deduction.
-# Set to False in tests that need deterministic exact bankroll values.
+# Set PAPER_FRICTION=false in tests that need deterministic exact bankroll values.
 import os as _os
 PAPER_FRICTION: bool = _os.getenv("PAPER_FRICTION", "true").lower() != "false"
 
@@ -148,13 +148,11 @@ async def _paper_fill(
 ) -> None:
     """Simulate a fill in paper trading mode with realistic live-trading friction.
 
-    Three live gaps are modelled here so paper stats match live closely:
-    1. Slippage: FOK orders add 0–2 ticks (uniform random) to fill price.
-       Live CLOB WS price is 0.5–2s stale; the ask may have moved by fill time.
-    2. FOK rejection: 15% of momentum FOK orders are rejected (no fill, no debit).
-       At T<10s, other bots hit the same thin ask level; incomplete books → FOK cancel.
+    When PAPER_FRICTION=true (default), three live gaps are modelled:
+    1. FOK rejection (15%): thin T<10s book; other bots hit the same ask level.
+       Rejection IS written to trade history and dashboard so the rate is auditable.
+    2. Slippage (0–2 ticks uniform): CLOB WS price is 0.5–2s stale at fill time.
     3. Taker fee deducted from bankroll: CLOB charges fee at fill, not at signal.
-       Paper previously understated cost by ~1% per trade (fee was only in edge gate).
     """
     import random
     from polymarket.fair_value import dynamic_taker_fee
@@ -162,45 +160,66 @@ async def _paper_fill(
     if is_momentum:
         oracle.strategy_phase = "FILL"
     quoted_price = intent.get("price", 0.5)
-    shares = intent.get("shares", 0.0)
     dollar_size = intent.get("dollar_size", 0.0)
+    loop = asyncio.get_running_loop()
 
     if intent.get("order_type") == "POST_ONLY":
         log.info(f"[OMS/paper] POST_ONLY placed: {order_id} @ {quoted_price:.3f}")
-        return  # Maker quotes don't have slippage or rejection
+        return  # Maker quotes — no slippage, no rejection, no phase change
 
     if PAPER_FRICTION:
-        # Gap 2: FOK rejection — 15% of FOK orders get no fill at thin T<10s books
+        # Gap 1: FOK rejection — 15% of FOK orders get no fill at thin T<10s books.
+        # Write to history so rejection rate is visible in calibrator and dashboard.
         if intent.get("order_type") == "FOK" and random.random() < 0.15:
             log.info(
-                f"[OMS/paper] FOK REJECTED (simulated thin liquidity): "
+                f"[OMS/paper] FOK REJECTED (thin book): "
                 f"{intent.get('strategy')} {intent.get('side')} @ {quoted_price:.3f}"
             )
+            reject_record = {
+                "order_id": order_id,
+                "action": "rejected",
+                "strategy": intent.get("strategy"),
+                "market_id": intent.get("market_id"),
+                "side": intent.get("side"),
+                "quoted_price": quoted_price,
+                "dollar_size": dollar_size,
+                "paper": True,
+            }
+            await loop.run_in_executor(None, append_trade, reject_record)
+            oracle.pending_trade_events.append({
+                "id": order_id,
+                "market_id": intent.get("market_id") or "unknown",
+                "strategy": intent.get("strategy") or "?",
+                "side": intent.get("side") or "YES",
+                "entry_price": quoted_price,
+                "fair_value": intent.get("fair") or quoted_price,
+                "edge": intent.get("edge") or 0.0,
+                "dollar_size": 0.0,
+                "action": "rejected",
+                "pnl": 0.0,
+                "paper": True,
+                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            })
             if is_momentum:
                 oracle.strategy_phase = "HOLD"
             return
 
-        # Gap 1: Slippage — 0 to 2 ticks worse than quoted ask (uniform, per tick = 0.01)
+        # Gap 2: Slippage — 0 to 2 ticks worse than quoted ask (each tick = $0.01)
         slip_ticks = random.randint(0, 2)
-        fill_price = min(quoted_price + slip_ticks * 0.01, 0.99)  # cap at $0.99
-        if slip_ticks > 0:
-            log.debug(
-                f"[OMS/paper] Slippage: {slip_ticks} tick(s) "
-                f"({quoted_price:.3f} → {fill_price:.3f})"
-            )
+        fill_price = min(quoted_price + slip_ticks * 0.01, 0.99)
 
-        # Gap 3: Taker fee charged at fill — deducted from bankroll separately
+        # Gap 3: Taker fee deducted from bankroll separately (matches live CLOB settlement)
         taker_fee = dynamic_taker_fee(fill_price) * dollar_size
         total_cost = dollar_size + taker_fee
     else:
         fill_price = quoted_price
+        slip_ticks = 0
         taker_fee = 0.0
         total_cost = dollar_size
 
-    # Recalculate shares at actual fill price (not quoted)
     actual_shares = dollar_size / max(fill_price, 0.01)
 
-    # Simulate position — use .get() so partially-formed arb orders don't crash
+    # Simulate position
     pos = OpenPosition(
         market_id=intent.get("market_id") or "unknown",
         condition_id=intent.get("condition_id") or "unknown",
@@ -231,9 +250,7 @@ async def _paper_fill(
         "dollar_size": dollar_size,
         "paper": True,
     }
-    loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, append_trade, trade_record)
-    # Push to dashboard trade feed
     oracle.pending_trade_events.append({
         "id": order_id,
         "market_id": intent.get("market_id") or "unknown",
@@ -243,13 +260,14 @@ async def _paper_fill(
         "fair_value": intent.get("fair") or fill_price,
         "edge": intent.get("edge") or 0.0,
         "dollar_size": dollar_size,
+        "slippage": round(fill_price - quoted_price, 3),
         "pnl": None,
         "paper": True,
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     })
     log.info(
-        f"[OMS/paper] Filled: {order_id} {actual_shares:.2f}sh @ {fill_price:.3f} "
-        f"(slip={fill_price - quoted_price:+.3f}, fee={taker_fee:.3f})"
+        f"[OMS/paper] Filled: {order_id} {actual_shares:.2f}sh @ {fill_price:.3f}"
+        + (f" (slip +{slip_ticks}t, fee ${taker_fee:.3f})" if PAPER_FRICTION else "")
     )
     if is_momentum:
         oracle.strategy_phase = "HOLD"

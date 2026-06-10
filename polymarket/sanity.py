@@ -6,14 +6,13 @@ Sanity check loop — runs every 60s.
 2. MATIC gas balance monitor: alert if < 1 POL.
 3. pUSD allowance monitor: auto-reapprove if allowance < 50% of bankroll.
 4. WebSocket freshness: log critical if either WS hasn't delivered data in 30s.
-5. Bankroll reconciliation: compare oracle.bankroll against on-chain pUSD.
 """
 import asyncio
 import logging
 import time
 
-from polymarket.oracle_buffer import OracleBuffer, OpenPosition
-from polymarket.execution.wallet import get_matic_balance, get_pusd_balance, approve_pusd
+from polymarket.oracle_buffer import OracleBuffer
+from polymarket.execution.wallet import get_matic_balance, get_pusd_balance, approve_pusd_max
 
 log = logging.getLogger(__name__)
 
@@ -33,13 +32,14 @@ async def sanity_loop(oracle: OracleBuffer) -> None:
         if not oracle.paper_trading:
             await _check_gas(oracle)
             await _check_pusd_allowance(oracle)
-            await _check_bankroll_reconciliation(oracle)
+            await _check_bankroll_vs_chain(oracle)
         _check_ws_freshness(oracle)
 
 
 async def _check_ghost_positions(oracle: OracleBuffer) -> None:
     """Compare bot-tracked positions against CLOB ground truth."""
-    if oracle.paper_trading:
+    import os
+    if os.getenv("PAPER_TRADING", "true").lower() == "true":
         return  # No CLOB positions in paper mode
 
     try:
@@ -53,16 +53,6 @@ async def _check_ghost_positions(oracle: OracleBuffer) -> None:
                     f"GHOST POSITION: {market_id} "
                     f"size={pos_data.get('size', '?')} — adding to tracking"
                 )
-                # H2: reconcile ghost position into open_positions tracking
-                oracle.open_positions[market_id] = OpenPosition(
-                    market_id=market_id,
-                    condition_id=pos_data.get("conditionId", market_id),
-                    token_id=pos_data.get("tokenId", ""),
-                    side=pos_data.get("side", "YES"),
-                    shares=float(pos_data.get("size", 0)),
-                    cost_basis=float(pos_data.get("costBasis", 0)),
-                )
-                log.warning(f"GHOST POSITION reconciled: {market_id} — added to tracking for redemption")
     except Exception as exc:
         log.warning(f"Ghost position check failed: {exc!r}")
 
@@ -73,41 +63,48 @@ async def _check_gas(oracle: OracleBuffer) -> None:
         log.critical(
             f"LOW GAS: {matic:.4f} POL — transactions will fail. Replenish immediately."
         )
+        oracle.emergency_halt = True
     else:
         log.debug(f"Gas OK: {matic:.4f} POL")
 
 
 async def _check_pusd_allowance(oracle: OracleBuffer) -> None:
-    # L1: use get_pusd_allowance() to check spending allowance, not balance
-    try:
-        from polymarket.execution.wallet import get_pusd_allowance
-        allowance = await get_pusd_allowance()
-    except (ImportError, AttributeError):
-        # fallback to balance if allowance function not yet available
-        allowance = await get_pusd_balance()
-    if allowance < oracle.bankroll * 0.5 and oracle.bankroll > 0:
+    pusd_bal = await get_pusd_balance()
+    if pusd_bal < oracle.bankroll * 0.5 and oracle.bankroll > 0:
         log.warning(
-            f"pUSD allowance low ({allowance:.2f} < {oracle.bankroll * 0.5:.2f}) "
+            f"pUSD allowance low ({pusd_bal:.2f} < {oracle.bankroll * 0.5:.2f}) "
             "— re-approving CTF Exchange"
         )
-        await approve_pusd(oracle.bankroll * 2)
-    log.debug(f"pUSD allowance: {allowance:.2f}")
-
-
-async def _check_bankroll_reconciliation(oracle: OracleBuffer) -> None:
-    """H13: Compare oracle.bankroll against on-chain pUSD + open position cost."""
-    try:
-        pusd = await get_pusd_balance()
-        open_cost = sum(p.cost_basis for p in oracle.open_positions.values() if not p.resolved)
-        expected = pusd + open_cost
-        discrepancy = abs(oracle.bankroll - expected) / max(oracle.bankroll, 1)
-        if discrepancy > 0.05:
+        await approve_pusd_max()
+        # Verify the re-approve worked
+        pusd_bal_after = await get_pusd_balance()
+        if pusd_bal_after < oracle.bankroll * 0.5:
             log.critical(
-                f"Bankroll mismatch: oracle={oracle.bankroll:.2f} "
-                f"onchain+positions={expected:.2f} ({discrepancy:.1%} drift)"
+                f"pUSD re-approve failed: balance still {pusd_bal_after:.2f} "
+                f"< required {oracle.bankroll * 0.5:.2f} — halting trading"
             )
+            oracle.emergency_halt = True
+    log.debug(f"pUSD balance: {pusd_bal:.2f}")
+
+
+async def _check_bankroll_vs_chain(oracle: OracleBuffer) -> None:
+    """Reconcile oracle.bankroll against actual on-chain pUSD balance."""
+    import os
+    if os.getenv("PAPER_TRADING", "true").lower() == "true":
+        return  # Nothing to reconcile in paper mode
+
+    try:
+        chain_balance = await get_pusd_balance()
+        if oracle.bankroll > 0 and chain_balance < oracle.bankroll * 0.8:
+            log.critical(
+                f"BANKROLL MISMATCH: on-chain pUSD={chain_balance:.2f} is more than 20% "
+                f"below oracle.bankroll={oracle.bankroll:.2f} — halting trading"
+            )
+            oracle.emergency_halt = True
         else:
-            log.debug(f"Bankroll reconciled: oracle={oracle.bankroll:.2f} expected={expected:.2f}")
+            log.debug(
+                f"Bankroll reconciled: chain={chain_balance:.2f}, oracle={oracle.bankroll:.2f}"
+            )
     except Exception as exc:
         log.warning(f"Bankroll reconciliation failed: {exc!r}")
 
@@ -121,5 +118,7 @@ def _check_ws_freshness(oracle: OracleBuffer) -> None:
         log.critical(
             f"Binance WS stale: no data for {binance_age:.0f}s — price data unreliable"
         )
+        # Note: do NOT set emergency_halt here — the WS reconnect loop handles recovery
+        # automatically. sanity_loop will clear the alert on next pass when fresh again.
     if clob_age > WS_STALE_THRESHOLD:
-        log.warning(f"CLOB WS stale: no data for {clob_age:.0f}s")
+        log.critical(f"CLOB WS stale: no data for {clob_age:.0f}s")

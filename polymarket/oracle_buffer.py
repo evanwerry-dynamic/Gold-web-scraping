@@ -1,5 +1,4 @@
 """Shared in-memory state written by WebSocket feeds, read by strategy loops."""
-import asyncio
 import time
 from dataclasses import dataclass, field
 from collections import deque
@@ -14,20 +13,15 @@ class BinanceVolEstimator:
         self._last_price: float | None = None
 
     def update(self, price: float) -> None:
-        if price > 0 and self._last_price and self._last_price > 0:
+        if self._last_price and self._last_price > 0:
             self._returns.append(np.log(price / self._last_price))
-        if price > 0:
-            self._last_price = price
+        self._last_price = price
 
     def sigma_per_second(self) -> float:
         """Return per-second realized vol. Falls back to 0.0002 if insufficient data."""
         if len(self._returns) < 5:
             return 0.0002
         return float(np.std(self._returns))
-
-    def is_ready(self) -> bool:
-        """True once we have enough samples for a meaningful vol estimate."""
-        return len(self._returns) >= 5
 
 
 @dataclass
@@ -45,7 +39,6 @@ class ActiveMarket:
     no_bid: float = 0.82
     bid_depth: float = 0.0
     ask_depth: float = 0.0
-    last_book_update_ts: float = 0.0  # M5: track last orderbook update
 
 
 @dataclass
@@ -59,8 +52,7 @@ class OpenPosition:
     resolved: bool = False
     resolution: float = 0.0  # 1.0 = won, 0.0 = lost
     redeemed: bool = False
-    window_open_price: float = 0.0   # BTC price when this window opened
-    settlement_price: float = 0.0    # BTC price at window close (set by resolver)
+    window_open_price: float = 0.0  # BTC price when this window opened (for self-resolution)
 
 
 @dataclass
@@ -79,13 +71,9 @@ class OracleBuffer:
     total_pnl: float = 0.0
     today_pnl: float = 0.0
 
-    # Concurrency lock protecting bankroll and open_positions mutations (C3/H10)
-    bankroll_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
-
     # WebSocket freshness (last real data message timestamp)
     last_binance_ts: float = field(default_factory=time.time)
     last_clob_ts: float = field(default_factory=time.time)
-    last_clob_connected_ts: float = field(default_factory=time.time)  # H6: keepalive ts
 
     # Strategy state for dashboard
     strategy_phase: str = "SCAN"   # SCAN | FAIR | EDGE | LIMIT | FILL | HOLD
@@ -93,29 +81,11 @@ class OracleBuffer:
     # Paper trading flag
     paper_trading: bool = True
 
-    # Startup barrier: set by the first price feed message, waited on by strategies
-    price_ready: asyncio.Event = field(default_factory=asyncio.Event)
+    # Emergency halt flag — set by sanity_loop on critical conditions
+    emergency_halt: bool = False
 
     # Dashboard event queue — OMS pushes trade dicts here, bridge drains them
-    pending_trade_events: deque = field(default_factory=deque)
-
-    # H3: strategy parameters updated by calibrator at runtime
-    strategy_config: dict = field(default_factory=lambda: {
-        "min_delta_threshold": 0.001,
-        "min_edge_net": 0.05,
-        "entry_seconds_before_close": 10.0,
-    })
-
-    # M12: active price source for dashboard
-    active_price_source: str = "none"
-
-    # Peak bankroll for drawdown calculation (updated on every fill, displayed in dashboard)
-    peak_bankroll: float = 0.0
-
-    # Emergency kill switch — set True to stop all order submission immediately.
-    # Feeds, resolve, and redeem loops continue running so existing positions
-    # are settled correctly. Set False to resume trading.
-    emergency_halt: bool = False
+    pending_trade_events: deque = field(default_factory=lambda: deque(maxlen=1000))
 
     def window_seconds_remaining(self) -> float:
         if self.active_market is None:

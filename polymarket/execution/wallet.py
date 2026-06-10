@@ -10,12 +10,60 @@ import os
 log = logging.getLogger(__name__)
 
 # Polygon Mainnet contract addresses (CLOB V2, live April 28 2026)
-CTF_EXCHANGE_V2   = "0xE111180000d2663C0091e4f400237545B87B996B"
-NEG_RISK_V2       = "0xe2222d279d744050d28e00520010520000310F59"
-PUSD_ADDRESS      = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB"
-COLLATERAL_ONRAMP = "0x93070a847efEf7F70739046A929D47a521F5B8ee"
+# All addresses are overridable via environment variables.
+CTF_EXCHANGE_V2   = os.getenv("CTF_EXCHANGE_V2", "0xE111180000d2663C0091e4f400237545B87B996B")
+NEG_RISK_V2       = os.getenv("NEG_RISK_V2", "0xe2222d279d744050d28e00520010520000310F59")
+PUSD_ADDRESS      = os.getenv("PUSD_ADDRESS", "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB")
+COLLATERAL_ONRAMP = os.getenv("COLLATERAL_ONRAMP", "0x93070a847efEf7F70739046A929D47a521F5B8ee")
 
 _client = None  # Singleton CLOB client
+
+
+def get_web3():
+    """Return a connected Web3 instance (primary RPC with fallback)."""
+    from web3 import Web3
+    primary = os.getenv("POLYGON_RPC_PRIMARY", "https://polygon-rpc.com")
+    fallback = os.getenv("POLYGON_RPC_FALLBACK", "https://rpc.ankr.com/polygon")
+    for url in (primary, fallback):
+        try:
+            w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 10}))
+            if w3.is_connected():
+                return w3
+        except Exception:
+            continue
+    raise RuntimeError("Cannot connect to Polygon RPC (tried primary and fallback)")
+
+
+_CTF_ABI = [
+    {
+        "name": "redeemPositions",
+        "type": "function",
+        "inputs": [
+            {"name": "collateralToken", "type": "address"},
+            {"name": "parentCollectionId", "type": "bytes32"},
+            {"name": "conditionId", "type": "bytes32"},
+            {"name": "indexSets", "type": "uint256[]"},
+        ],
+        "outputs": [],
+        "stateMutability": "nonpayable",
+    },
+    {
+        "name": "balanceOf",
+        "type": "function",
+        "inputs": [
+            {"name": "account", "type": "address"},
+            {"name": "id", "type": "uint256"},
+        ],
+        "outputs": [{"name": "", "type": "uint256"}],
+        "stateMutability": "view",
+    },
+]
+
+
+def get_ctf_exchange(w3):
+    """Return the CTF Exchange V2 contract instance."""
+    addr = os.getenv("CTF_EXCHANGE_V2", "0xE111180000d2663C0091e4f400237545B87B996B")
+    return w3.eth.contract(address=w3.to_checksum_address(addr), abi=_CTF_ABI)
 
 
 def get_clob_client():

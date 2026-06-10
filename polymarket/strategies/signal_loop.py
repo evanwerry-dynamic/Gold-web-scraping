@@ -161,6 +161,8 @@ async def signal_loop(
             f"[A] Signal: {direction} δ={delta:.4%} fair={fair:.3f} "
             f"ask={ask:.3f} edge={net_edge:.4f} size=${sizing['dollar_size']:.2f}"
         )
-        await order_queue.put(order)
+        # Set last_fired_window BEFORE put so a slow OMS cannot cause a re-fire
+        # if this coroutine is re-entered while the put is awaited.
         last_fired_window = market.market_id
+        await order_queue.put(order)
         oracle.strategy_phase = "FILL"

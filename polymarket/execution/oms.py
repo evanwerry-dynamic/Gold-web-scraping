@@ -227,6 +227,17 @@ async def _paper_fill(
         window_open_price=intent.get("window_open_price", 0.0),
     )
     async with oracle.bankroll_lock:
+        # Sufficiency backstop: never let total committed cost exceed available
+        # bankroll. Defends against concurrent orders over-committing capital
+        # regardless of per-strategy sizing bugs.
+        if total_cost > oracle.bankroll:
+            log.warning(
+                f"[OMS/paper] Insufficient bankroll: order needs ${total_cost:.2f} "
+                f"but only ${oracle.bankroll:.2f} available — rejecting"
+            )
+            if is_momentum:
+                oracle.strategy_phase = "HOLD"
+            return
         oracle.open_positions[order_id] = pos
         oracle.bankroll -= total_cost
         oracle.peak_bankroll = max(oracle.peak_bankroll, oracle.bankroll)

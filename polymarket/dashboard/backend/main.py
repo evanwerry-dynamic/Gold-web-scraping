@@ -174,7 +174,7 @@ async def websocket_endpoint(ws: WebSocket):
                         "market_id": t.get("market_id", "?"),
                         "strategy": t.get("strategy", "?"),
                         "side": t.get("side", "?"),
-                        "entry_price": t.get("entry_price", 0.0),
+                        "entry_price": t.get("entry_price") or t.get("quoted_price", 0.0),
                         "fair_value": t.get("fair_value") or t.get("entry_price", 0.0),
                         "edge": t.get("edge") or 0.0,
                         "dollar_size": t.get("dollar_size", 0.0),
@@ -184,6 +184,7 @@ async def websocket_endpoint(ws: WebSocket):
                         "btc_open": t.get("btc_open"),
                         "btc_settle": t.get("btc_settle"),
                         "btc_delta_pct": t.get("btc_delta_pct"),
+                        "action": t.get("action"),
                     }
                 }))
         except Exception as exc:

@@ -17,6 +17,7 @@ export interface Trade {
   btc_open?: number | null;
   btc_settle?: number | null;
   btc_delta_pct?: number | null;
+  action?: string | null;
 }
 
 export interface Position {

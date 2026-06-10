@@ -181,9 +181,11 @@ async def _paper_fill(
                 "strategy": intent.get("strategy"),
                 "market_id": intent.get("market_id"),
                 "side": intent.get("side"),
-                "quoted_price": quoted_price,
+                "entry_price": quoted_price,
                 "dollar_size": dollar_size,
+                "pnl": 0.0,
                 "paper": True,
+                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             }
             await loop.run_in_executor(None, append_trade, reject_record)
             oracle.pending_trade_events.append({

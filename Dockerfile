@@ -10,8 +10,11 @@ RUN npm run build
 FROM python:3.11-slim
 WORKDIR /app
 
+# System deps for web3/cryptography + Node.js for frontend build
 RUN apt-get update -qq && apt-get install -y --no-install-recommends \
-    gcc g++ libssl-dev && rm -rf /var/lib/apt/lists/*
+    gcc g++ libssl-dev curl && rm -rf /var/lib/apt/lists/* \
+ && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+ && apt-get install -y nodejs && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && python -m uvicorn --version
@@ -21,6 +24,9 @@ COPY . .
 COPY --from=frontend /frontend/out polymarket/dashboard/frontend/out
 
 RUN mkdir -p data/polymarket polymarket/state
+
+# Build Next.js static export so the dashboard is served at /
+RUN cd polymarket/dashboard/frontend && npm ci --prefer-offline 2>/dev/null || npm install && npm run build
 
 ENV PAPER_TRADING=true
 

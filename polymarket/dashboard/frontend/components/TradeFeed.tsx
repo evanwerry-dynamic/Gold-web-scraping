@@ -18,8 +18,9 @@ export function TradeFeed() {
           </div>
         ) : (
           trades.map((t: Trade, i: number) => {
+            const isRejected = t.action === "rejected";
             const pnl = t.pnl;
-            const pnlColor = pnl === null ? "#555" : pnl >= 0 ? "#00ff88" : "#ff4466";
+            const pnlColor = isRejected ? "#ff4466" : pnl === null ? "#555" : pnl >= 0 ? "#00ff88" : "#ff4466";
             const sideColor = ["UP", "YES"].includes(t.side) ? "#00ff88" : "#ff9900";
             return (
               <div
@@ -30,13 +31,14 @@ export function TradeFeed() {
                   display: "flex",
                   flexDirection: "column",
                   gap: 2,
+                  opacity: isRejected ? 0.65 : 1,
                 }}
               >
                 {/* Row 1: badge + side + P&L */}
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <span style={{
-                    background: "#1a1a1a",
-                    color: "#00ff88",
+                    background: isRejected ? "#2a0a0a" : "#1a1a1a",
+                    color: isRejected ? "#ff4466" : "#00ff88",
                     fontSize: 9,
                     fontWeight: 700,
                     padding: "1px 5px",
@@ -45,19 +47,19 @@ export function TradeFeed() {
                   }}>
                     {STRAT[t.strategy] ?? t.strategy}
                   </span>
-                  <span style={{ color: sideColor, fontWeight: 700, fontSize: 12, flexShrink: 0 }}>
+                  <span style={{ color: isRejected ? "#ff4466" : sideColor, fontWeight: 700, fontSize: 12, flexShrink: 0 }}>
                     {t.side}
                   </span>
                   <span style={{ flex: 1 }} />
                   <span style={{ color: pnlColor, fontWeight: 700, fontSize: 12 }}>
-                    {pnl === null ? "OPEN" : `${pnl >= 0 ? "+" : ""}$${Math.abs(pnl).toFixed(2)}`}
+                    {isRejected ? "REJECT" : pnl === null ? "OPEN" : `${pnl >= 0 ? "+" : ""}$${Math.abs(pnl).toFixed(2)}`}
                   </span>
                 </div>
-                {/* Row 2: entry → fair, size */}
+                {/* Row 2: entry price + size */}
                 <div style={{ display: "flex", gap: 8, fontSize: 10, color: "#444" }}>
                   <span>
                     {(t.entry_price ?? 0).toFixed(3)}
-                    {t.fair_value ? <span style={{ color: "#2a2a2a" }}> → {t.fair_value.toFixed(3)}</span> : null}
+                    {!isRejected && t.fair_value ? <span style={{ color: "#2a2a2a" }}> → {t.fair_value.toFixed(3)}</span> : null}
                   </span>
                   <span style={{ flex: 1 }} />
                   <span style={{ color: "#333" }}>${(t.dollar_size ?? 0).toFixed(2)}</span>

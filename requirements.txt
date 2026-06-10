@@ -16,3 +16,10 @@ psycopg2-binary>=2.9.0
 
 # Polymarket CLOB client
 py_clob_client_v2>=1.0.1
+
+# On-chain wallet: balance checks, pUSD approval, conditional-token redemption (live mode)
+web3>=6.0.0
+
+# Tests (pytest.ini sets asyncio_mode=auto)
+pytest>=8.0.0
+pytest-asyncio>=0.23.0

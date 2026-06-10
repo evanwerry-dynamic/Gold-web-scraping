@@ -202,13 +202,13 @@ class TestKellySize:
     def test_hard_cap_at_3pct(self):
         # Even with a massive edge, cap is 3% of bankroll
         result = kelly_size(fair_prob=0.999, market_price=0.50, bankroll=1000.0)
-        assert result["dollar_size"] <= 30.01  # 3% of 1000 + float tolerance
+        assert result["dollar_size"] <= 15.01  # 1.5% of 1000 + float tolerance
 
     def test_scale_factor_reduces_size(self):
-        # Use a narrow edge so kelly size is well below the 3% hard cap
-        # fair=0.87, market=0.85 → small edge, won't hit the cap
-        full  = kelly_size(fair_prob=0.87, market_price=0.85, bankroll=1000.0, scale_factor=1.0)
-        half  = kelly_size(fair_prob=0.87, market_price=0.85, bankroll=1000.0, scale_factor=0.5)
+        # Use a very narrow edge so kelly size stays below the 1.5% hard cap
+        # fair=0.855, market=0.85 → tiny edge, full_kelly*0.25 ≈ 0.83% < 1.5% cap
+        full  = kelly_size(fair_prob=0.855, market_price=0.85, bankroll=1000.0, scale_factor=1.0)
+        half  = kelly_size(fair_prob=0.855, market_price=0.85, bankroll=1000.0, scale_factor=0.5)
         assert full["dollar_size"] > 0, "should have positive size at scale=1"
         assert half["dollar_size"] < full["dollar_size"], "half scale should produce smaller size"
 

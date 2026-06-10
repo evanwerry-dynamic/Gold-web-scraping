@@ -6,13 +6,20 @@ Sanity check loop — runs every 60s.
 2. MATIC gas balance monitor: alert if < 1 POL.
 3. pUSD allowance monitor: auto-reapprove if allowance < 50% of bankroll.
 4. WebSocket freshness: log critical if either WS hasn't delivered data in 30s.
+5. Midnight daily reset: call risk_mgr.reset_daily() when UTC date changes.
+6. Monthly reset: call risk_mgr.reset_monthly() on the 1st of each month.
 """
 import asyncio
 import logging
 import time
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from polymarket.oracle_buffer import OracleBuffer
 from polymarket.execution.wallet import get_matic_balance, get_pusd_balance, approve_pusd
+
+if TYPE_CHECKING:
+    from polymarket.risk import RiskManager
 
 log = logging.getLogger(__name__)
 
@@ -21,9 +28,12 @@ MIN_MATIC = 1.0            # POL tokens
 WS_STALE_THRESHOLD = 30.0  # seconds
 
 
-async def sanity_loop(oracle: OracleBuffer) -> None:
+async def sanity_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = None) -> None:
     """Sanity checks every 60s. Never exits."""
     log.info("Sanity check loop starting...")
+    last_reset_date = datetime.now(timezone.utc).date()
+    last_reset_month = last_reset_date.month
+
     while True:
         await asyncio.sleep(SANITY_INTERVAL)
         await _check_ghost_positions(oracle)
@@ -34,6 +44,19 @@ async def sanity_loop(oracle: OracleBuffer) -> None:
             await _check_pusd_allowance(oracle)
             await _check_bankroll_vs_chain(oracle)
         _check_ws_freshness(oracle)
+
+        # Midnight daily reset — allows trading to resume after a daily loss halt
+        if risk_mgr is not None:
+            now_utc = datetime.now(timezone.utc)
+            today = now_utc.date()
+            if today != last_reset_date:
+                risk_mgr.reset_daily(oracle.bankroll)
+                last_reset_date = today
+                log.info(f"Daily risk reset: new daily_start=${oracle.bankroll:.2f}")
+            if today.month != last_reset_month:
+                risk_mgr.reset_monthly(oracle.bankroll)
+                last_reset_month = today.month
+                log.info(f"Monthly risk reset: new monthly_start=${oracle.bankroll:.2f}")
 
 
 async def _check_ghost_positions(oracle: OracleBuffer) -> None:

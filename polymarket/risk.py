@@ -108,6 +108,7 @@ class RiskManager:
 
     def reset_monthly(self, current_bankroll: float) -> None:
         self.monthly_start = current_bankroll
+        self.daily_start = current_bankroll  # new month = new day
 
 
 def kelly_size(

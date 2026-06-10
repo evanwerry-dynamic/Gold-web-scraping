@@ -247,10 +247,12 @@ async def _track_until_terminal(
     timeout = FOK_TIMEOUT if intent.get("order_type") == "FOK" else GTC_TIMEOUT
     deadline = time.time() + timeout
 
+    consecutive_poll_failures = 0
     while time.time() < deadline:
         await asyncio.sleep(FILL_POLL_INTERVAL)
         try:
             order = await loop.run_in_executor(None, client.get_order, tracked_id)
+            consecutive_poll_failures = 0  # reset on successful poll
             status = (order.get("status") or "").lower()
 
             if status in ("matched", "filled"):
@@ -295,7 +297,16 @@ async def _track_until_terminal(
                 return
 
         except Exception as exc:
+            consecutive_poll_failures += 1
             log.warning(f"[OMS/live] Poll error for {tracked_id}: {exc!r}")
+            if consecutive_poll_failures >= 3:
+                log.critical(
+                    f"[OMS/live] DEAD-LETTER: {consecutive_poll_failures} consecutive poll "
+                    f"failures for order {tracked_id} — manual investigation required. "
+                    f"Intent: strategy={intent.get('strategy')} market={intent.get('market_id')} "
+                    f"side={intent.get('side')} size=${intent.get('dollar_size', 0):.2f} "
+                    f"price={intent.get('price', 0):.3f} type={intent.get('order_type')}"
+                )
 
     # Timed out — attempt cancel
     log.warning(f"[OMS/live] Order {tracked_id} timed out after {timeout}s — cancelling")

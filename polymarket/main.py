@@ -93,8 +93,13 @@ async def run() -> None:
         except Exception as exc:
             log.warning(f"P&L bootstrap failed: {exc!r}")
 
-    risk_mgr = RiskManager(bankroll=oracle.bankroll)
-    order_queue: asyncio.Queue = asyncio.Queue(maxsize=10)  # M11: cap queue at 10
+    # Use INITIAL_BANKROLL env var as the authoritative starting point.
+    # Never use oracle.bankroll here — it may be restored from a previous session.
+    _initial = float(os.getenv("INITIAL_BANKROLL", str(oracle.bankroll)))
+    risk_mgr = RiskManager(bankroll=_initial)
+    # Sync peak to current (may be above initial if bot has profited)
+    risk_mgr.peak = max(_initial, oracle.bankroll)
+    order_queue: asyncio.Queue = asyncio.Queue()
 
     # Warn clearly if running without a database — Railway redeploys wipe the
     # ephemeral filesystem, so all trades and bankroll are lost on every deploy.
@@ -108,17 +113,6 @@ async def run() -> None:
         log.warning("=" * 60)
     else:
         log.info("PostgreSQL persistence active — state survives redeploys")
-
-    # Expose oracle to the dashboard halt/resume endpoints
-    try:
-        from polymarket.dashboard.backend.bridge import set_oracle
-        set_oracle(oracle)
-    except Exception:
-        pass
-
-    # Initialise peak_bankroll so the drawdown display is correct from the start
-    if oracle.peak_bankroll <= 0:
-        oracle.peak_bankroll = oracle.bankroll
 
     mode = "PAPER TRADING" if paper else "LIVE TRADING"
     log.info(f"Mad Scientist starting in {mode} mode")
@@ -134,32 +128,12 @@ async def run() -> None:
         _guard(lambda: maker_loop(oracle, order_queue, risk_mgr),  "maker_loop"),
         _guard(lambda: arb_loop(oracle, order_queue, risk_mgr),    "arb_loop"),
         _guard(lambda: oms_loop(order_queue, oracle, risk_mgr),    "oms_loop"),
-        _guard(lambda: redeem_loop(oracle, risk_mgr),              "redeem_loop"),
+        _guard(lambda: redeem_loop(oracle),                        "redeem_loop"),
         _guard(lambda: sanity_loop(oracle),                        "sanity_loop"),
         _guard(lambda: persist_loop(oracle),                       "persist_loop"),
         _guard(lambda: calibrator_loop(),                          "calibrator"),
         _guard(lambda: _dashboard_broadcast(oracle),               "dashboard_broadcast"),
-        _guard(lambda: _midnight_reset_loop(oracle, risk_mgr),     "midnight_reset"),
     )
-
-
-async def _midnight_reset_loop(oracle, risk_mgr) -> None:
-    """M1: Reset today_pnl and daily loss limit at UTC midnight. Never exits."""
-    from datetime import datetime, timezone, timedelta
-
-    while True:
-        now = datetime.now(timezone.utc)
-        # Compute seconds until next UTC midnight
-        next_midnight = (now + timedelta(days=1)).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        )
-        secs_until_midnight = (next_midnight - now).total_seconds()
-        log.info(f"Midnight reset scheduled in {secs_until_midnight:.0f}s")
-        await asyncio.sleep(secs_until_midnight)
-        # Reset daily stats
-        oracle.today_pnl = 0.0
-        risk_mgr.reset_daily(oracle.bankroll)
-        log.info(f"UTC midnight reset: today_pnl=0, daily_start={oracle.bankroll:.2f}")
 
 
 async def _dashboard_broadcast(oracle) -> None:

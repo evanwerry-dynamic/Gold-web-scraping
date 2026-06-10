@@ -192,6 +192,12 @@ def _fetch_active_btc_markets() -> list[dict[str, Any]]:
         try:
             prices = json.loads(m.get("outcomePrices", "[]"))
             tokens = json.loads(m.get("clobTokenIds", "[]"))
+            if len(tokens) < 2 or not tokens[0] or not tokens[1]:
+                continue  # skip malformed market
+            yes_token_id = str(tokens[0])
+            no_token_id = str(tokens[1])
+            if len(yes_token_id) < 10 or len(no_token_id) < 10:
+                continue  # skip if token IDs look wrong
             yes_price = float(prices[0]) if prices else 0.5
             # Extract numeric strike from question (e.g., "$65,200")
             match = re.search(r"\$([\d,]+)", q)
@@ -200,8 +206,8 @@ def _fetch_active_btc_markets() -> list[dict[str, Any]]:
                 "market_id": str(m.get("id")),
                 "condition_id": str(m.get("conditionId", "")),
                 "question": q,
-                "yes_token_id": str(tokens[0]) if tokens else "",
-                "no_token_id": str(tokens[1]) if len(tokens) > 1 else "",
+                "yes_token_id": yes_token_id,
+                "no_token_id": no_token_id,
                 "yes_price": yes_price,
                 "strike": strike,
                 "acceptingOrders": m.get("acceptingOrders", False),

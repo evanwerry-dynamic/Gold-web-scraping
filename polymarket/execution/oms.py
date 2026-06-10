@@ -10,11 +10,9 @@ Key guarantees:
 - All order submissions serialized through this single task
 """
 import asyncio
-import datetime
 import logging
 import os
 import time
-from collections import deque
 from enum import Enum
 
 from polymarket.data import append_trade
@@ -23,22 +21,16 @@ from polymarket.risk import RiskManager
 
 log = logging.getLogger(__name__)
 
-# Use oracle.paper_trading exclusively; module-level flag only for _cancel_all
 PAPER_TRADING = os.getenv("PAPER_TRADING", "true").lower() == "true"
-# Set PAPER_FRICTION=false in unit tests that need exact bankroll values
-PAPER_FRICTION: bool = os.getenv("PAPER_FRICTION", "true").lower() != "false"
-
 ORDER_CONCURRENCY = 3
 FILL_POLL_INTERVAL = 1.0   # seconds between fill status checks
-FOK_TIMEOUT = 5.0          # seconds before FOK is considered failed
-GTC_TIMEOUT = 30.0         # seconds before GTC is cancelled
+FOK_TIMEOUT = float(os.getenv("FOK_TIMEOUT_SECONDS", "5"))
+GTC_TIMEOUT = float(os.getenv("GTC_TIMEOUT_SECONDS", "30"))
 
-# Track filled order IDs to prevent double-debit.
-# Bounded to prevent memory leak — 2000 entries covers weeks of trading.
-_filled_order_ids: deque = deque(maxlen=2000)
-
-# Track pending market keys to deduplicate OMS orders
-_pending_market_keys: set[str] = set()
+# Dedup: track recent order intents to prevent double-fire.
+# Key: (market_id, strategy, order_type, rounded dollar_size) → first-seen timestamp
+_recent_intents: dict[tuple, float] = {}
+DEDUP_TTL = 10.0  # seconds
 
 
 class OrderState(str, Enum):
@@ -57,7 +49,7 @@ async def oms_loop(
 ) -> None:
     """Consume and execute orders from all strategy queues. Never exits."""
     sem = asyncio.Semaphore(ORDER_CONCURRENCY)
-    log.info(f"OMS starting (paper_trading={oracle.paper_trading})")
+    log.info(f"OMS starting (paper_trading={PAPER_TRADING})")
 
     while True:
         intent = await order_queue.get()
@@ -76,39 +68,31 @@ async def _process_order(
     oracle: OracleBuffer,
     risk_mgr: RiskManager,
 ) -> None:
-    # Emergency halt — drop all incoming orders immediately
-    if oracle.emergency_halt:
-        log.info(f"[OMS] Order dropped — emergency halt active ({intent.get('strategy')})")
+    # Dedup check: skip orders that are identical to a recent intent within DEDUP_TTL seconds.
+    # This prevents double-fire when a slow OMS processes a queued re-submission.
+    dedup_key = (
+        intent.get("market_id", ""),
+        intent.get("strategy", ""),
+        intent.get("order_type", ""),
+        round(float(intent.get("dollar_size", 0)), 1),
+    )
+    now = time.time()
+    # Purge expired entries
+    expired = [k for k, ts in _recent_intents.items() if now - ts > DEDUP_TTL]
+    for k in expired:
+        del _recent_intents[k]
+    if dedup_key in _recent_intents:
+        log.warning(
+            f"[OMS] Duplicate intent dropped (dedup TTL {DEDUP_TTL}s): "
+            f"strategy={intent.get('strategy')} market={intent.get('market_id')} "
+            f"size={intent.get('dollar_size')}"
+        )
         return
+    _recent_intents[dedup_key] = now
 
-    # Discard stale orders older than 8s
-    age = time.time() - intent.get("queued_at", time.time())
-    if age > 8.0:
-        log.warning(f"[OMS] Discarding stale {intent.get('strategy')} order ({age:.1f}s old)")
-        return
-
-    # Deduplicate orders by market_id + strategy + side.
-    # Side must be included so that arb bundles (YES + NO on same market)
-    # and maker pairs (BUY bid + SELL ask) each get through as distinct orders.
-    key = f"{intent.get('market_id')}-{intent.get('strategy')}-{intent.get('side', '')}"
-    if key in _pending_market_keys:
-        log.debug(f"[OMS] Skipping duplicate order key: {key}")
-        return
-    _pending_market_keys.add(key)
-    try:
-        await _process_order_inner(intent, sem, oracle, risk_mgr)
-    finally:
-        _pending_market_keys.discard(key)
-
-
-async def _process_order_inner(
-    intent: dict,
-    sem: asyncio.Semaphore,
-    oracle: OracleBuffer,
-    risk_mgr: RiskManager,
-) -> None:
     async with sem:
         # Only momentum (Strategy A) drives the strategy phase display.
+        # Strategy B/C orders are background — don't let them stomp the phase.
         is_momentum = intent.get("strategy") == "A"
         if is_momentum:
             oracle.strategy_phase = "LIMIT"
@@ -119,7 +103,7 @@ async def _process_order_inner(
             f"${intent.get('dollar_size', 0):.2f} @ {intent.get('price', 0):.3f}"
         )
 
-        if oracle.paper_trading:
+        if PAPER_TRADING:
             await _paper_fill(intent, order_id, oracle, risk_mgr, is_momentum)
             return
 
@@ -142,94 +126,29 @@ async def _paper_fill(
     risk_mgr: RiskManager,
     is_momentum: bool = False,
 ) -> None:
-    """Simulate a fill in paper trading mode with realistic live-trading friction.
-
-    When PAPER_FRICTION=true (default), three live gaps are modelled:
-    1. FOK rejection (15%): thin T<10s book; other bots hit the same ask level.
-       Rejection IS written to trade history and dashboard so the rate is auditable.
-    2. Slippage (0–2 ticks uniform): CLOB WS price is 0.5–2s stale at fill time.
-    3. Taker fee deducted from bankroll: CLOB charges fee at fill, not at signal.
-    """
-    import random
-    from polymarket.fair_value import dynamic_taker_fee
-
+    """Simulate a fill in paper trading mode."""
     if is_momentum:
         oracle.strategy_phase = "FILL"
-    quoted_price = intent.get("price", 0.5)
+    fill_price = intent.get("price", 0.5)
+    shares = intent.get("shares", 0.0)
     dollar_size = intent.get("dollar_size", 0.0)
-    loop = asyncio.get_running_loop()
 
     if intent.get("order_type") == "POST_ONLY":
-        log.info(f"[OMS/paper] POST_ONLY placed: {order_id} @ {quoted_price:.3f}")
-        return  # Maker quotes — no slippage, no rejection, no phase change
+        log.info(f"[OMS/paper] POST_ONLY placed: {order_id} @ {fill_price:.3f}")
+        return  # No phase change — maker quotes are silent background activity
 
-    if PAPER_FRICTION:
-        # Gap 1: FOK rejection — 15% of FOK orders get no fill at thin T<10s books.
-        # Write to history so rejection rate is visible in calibrator and dashboard.
-        if intent.get("order_type") == "FOK" and random.random() < 0.15:
-            log.info(
-                f"[OMS/paper] FOK REJECTED (thin book): "
-                f"{intent.get('strategy')} {intent.get('side')} @ {quoted_price:.3f}"
-            )
-            reject_record = {
-                "order_id": order_id,
-                "action": "rejected",
-                "strategy": intent.get("strategy"),
-                "market_id": intent.get("market_id"),
-                "side": intent.get("side"),
-                "entry_price": quoted_price,
-                "dollar_size": dollar_size,
-                "pnl": 0.0,
-                "paper": True,
-                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            }
-            await loop.run_in_executor(None, append_trade, reject_record)
-            oracle.pending_trade_events.append({
-                "id": order_id,
-                "market_id": intent.get("market_id") or "unknown",
-                "strategy": intent.get("strategy") or "?",
-                "side": intent.get("side") or "YES",
-                "entry_price": quoted_price,
-                "fair_value": intent.get("fair") or quoted_price,
-                "edge": intent.get("edge") or 0.0,
-                "dollar_size": 0.0,
-                "action": "rejected",
-                "pnl": 0.0,
-                "paper": True,
-                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            })
-            if is_momentum:
-                oracle.strategy_phase = "HOLD"
-            return
-
-        # Gap 2: Slippage — 0 to 2 ticks worse than quoted ask (each tick = $0.01)
-        slip_ticks = random.randint(0, 2)
-        fill_price = min(quoted_price + slip_ticks * 0.01, 0.99)
-
-        # Gap 3: Taker fee deducted from bankroll separately (matches live CLOB settlement)
-        taker_fee = dynamic_taker_fee(fill_price) * dollar_size
-        total_cost = dollar_size + taker_fee
-    else:
-        fill_price = quoted_price
-        slip_ticks = 0
-        taker_fee = 0.0
-        total_cost = dollar_size
-
-    actual_shares = dollar_size / max(fill_price, 0.01)
-
+    # Simulate position — use .get() so partially-formed arb orders don't crash
     pos = OpenPosition(
         market_id=intent.get("market_id") or "unknown",
         condition_id=intent.get("condition_id") or "unknown",
         token_id=intent.get("token_id") or intent.get("yes_token_id") or "unknown",
         side=intent.get("side", "YES"),
-        shares=actual_shares,
+        shares=shares or (dollar_size / max(fill_price, 0.01)),
         cost_basis=dollar_size,
         window_open_price=intent.get("window_open_price", 0.0),
     )
-    async with oracle.bankroll_lock:
-        oracle.open_positions[order_id] = pos
-        oracle.bankroll -= total_cost
-        oracle.peak_bankroll = max(oracle.peak_bankroll, oracle.bankroll)
+    oracle.open_positions[order_id] = pos
+    oracle.bankroll -= dollar_size
 
     trade_record = {
         "order_id": order_id,
@@ -238,15 +157,15 @@ async def _paper_fill(
         "side": intent.get("side"),
         "fair_value": intent.get("fair"),
         "entry_price": fill_price,
-        "quoted_price": quoted_price,
-        "slippage": round(fill_price - quoted_price, 3),
-        "taker_fee": round(taker_fee, 4),
         "edge": intent.get("edge"),
-        "shares": actual_shares,
+        "shares": shares,
         "dollar_size": dollar_size,
         "paper": True,
     }
+    import datetime
+    loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, append_trade, trade_record)
+    # Push to dashboard trade feed
     oracle.pending_trade_events.append({
         "id": order_id,
         "market_id": intent.get("market_id") or "unknown",
@@ -256,15 +175,11 @@ async def _paper_fill(
         "fair_value": intent.get("fair") or fill_price,
         "edge": intent.get("edge") or 0.0,
         "dollar_size": dollar_size,
-        "slippage": round(fill_price - quoted_price, 3),
         "pnl": None,
         "paper": True,
-        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "timestamp": datetime.datetime.utcnow().isoformat(),
     })
-    log.info(
-        f"[OMS/paper] Filled: {order_id} {actual_shares:.2f}sh @ {fill_price:.3f}"
-        + (f" (slip +{slip_ticks}t, fee ${taker_fee:.3f})" if PAPER_FRICTION else "")
-    )
+    log.info(f"[OMS/paper] Filled: {order_id} {shares:.2f}sh @ {fill_price:.3f}")
     if is_momentum:
         oracle.strategy_phase = "HOLD"
 
@@ -274,7 +189,7 @@ async def _submit_to_clob(intent: dict, order_id: str) -> dict:
     from polymarket.execution.wallet import get_clob_client
 
     client = get_clob_client()
-    loop = asyncio.get_running_loop()
+    loop = asyncio.get_event_loop()
     order_type_str = intent.get("order_type", "GTC")
     token_id = intent["token_id"]
 
@@ -325,9 +240,10 @@ async def _track_until_terminal(
     from polymarket.execution.wallet import get_clob_client
     from polymarket.data import append_trade
 
+    # polymarket API may return orderID or id depending on version
     tracked_id = resp.get("orderID") or resp.get("id") or "unknown"
     client = get_clob_client()
-    loop = asyncio.get_running_loop()
+    loop = asyncio.get_event_loop()
     timeout = FOK_TIMEOUT if intent.get("order_type") == "FOK" else GTC_TIMEOUT
     deadline = time.time() + timeout
 
@@ -338,12 +254,6 @@ async def _track_until_terminal(
             status = (order.get("status") or "").lower()
 
             if status in ("matched", "filled"):
-                # Prevent double-debit for same order
-                if tracked_id in _filled_order_ids:
-                    log.warning(f"[OMS] Skipping already-debited order: {tracked_id}")
-                    return
-                _filled_order_ids.append(tracked_id)
-
                 fill_price = float(order.get("avgPrice") or intent["price"])
                 shares = float(order.get("sizeMatched") or order.get("size") or intent.get("shares", 0))
                 dollar_size = shares * fill_price
@@ -356,9 +266,8 @@ async def _track_until_terminal(
                     shares=shares,
                     cost_basis=dollar_size,
                 )
-                async with oracle.bankroll_lock:
-                    oracle.open_positions[tracked_id] = pos
-                    oracle.bankroll -= dollar_size
+                oracle.open_positions[tracked_id] = pos
+                oracle.bankroll -= dollar_size
 
                 live_record = {
                     "order_id": tracked_id,
@@ -372,7 +281,7 @@ async def _track_until_terminal(
                     "dollar_size": dollar_size,
                     "paper": False,
                 }
-                await loop.run_in_executor(None, append_trade, live_record)
+                await asyncio.get_running_loop().run_in_executor(None, append_trade, live_record)
                 log.info(
                     f"[OMS/live] Filled: {tracked_id} "
                     f"{shares:.2f}sh @ {fill_price:.3f}"
@@ -390,52 +299,16 @@ async def _track_until_terminal(
 
     # Timed out — attempt cancel
     log.warning(f"[OMS/live] Order {tracked_id} timed out after {timeout}s — cancelling")
-    cancel_failed = False
     try:
         await loop.run_in_executor(None, client.cancel, tracked_id)
     except Exception as exc:
         log.warning(f"[OMS/live] Cancel failed for {tracked_id}: {exc!r}")
-        cancel_failed = True
-
-    # After cancel failure, do a final poll to catch late fills
-    if cancel_failed:
-        await asyncio.sleep(2)
-        try:
-            order = await loop.run_in_executor(None, client.get_order, tracked_id)
-            status = (order.get("status") or "").lower()
-            if status in ("matched", "filled") and tracked_id not in _filled_order_ids:
-                _filled_order_ids.append(tracked_id)
-                fill_price = float(order.get("avgPrice") or intent.get("price", 0))
-                shares = float(order.get("sizeMatched") or order.get("size") or intent.get("shares", 0))
-                dollar_size = shares * fill_price
-                pos = OpenPosition(
-                    market_id=intent["market_id"],
-                    condition_id=intent["condition_id"],
-                    token_id=intent["token_id"],
-                    side=intent.get("side", "YES"),
-                    shares=shares,
-                    cost_basis=dollar_size,
-                )
-                async with oracle.bankroll_lock:
-                    oracle.open_positions[tracked_id] = pos
-                    oracle.bankroll -= dollar_size
-                log.warning(f"[OMS] Late fill detected after cancel failure: {tracked_id}")
-        except Exception:
-            pass
-
     oracle.strategy_phase = "HOLD"
 
 
 async def _cancel_all(oracle: OracleBuffer) -> None:
     """Cancel all open maker quotes."""
-    if oracle.paper_trading:
+    if PAPER_TRADING:
         log.info("[OMS/paper] cancel_all (no-op in paper mode)")
         return
     log.info("[OMS] Cancelling all open orders")
-    try:
-        from polymarket.execution.wallet import get_clob_client
-        client = get_clob_client()
-        loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, client.cancel_all)
-    except Exception as exc:
-        log.error(f"[OMS] cancel_all failed: {exc!r}")

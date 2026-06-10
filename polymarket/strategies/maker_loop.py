@@ -66,7 +66,11 @@ async def maker_loop(
 
         # Pull asks when order flow is heavily one-sided (informed buyers)
         total_depth = market.bid_depth + market.ask_depth
-        imbalance = market.bid_depth / total_depth if total_depth > 0 else 0.5
+        if total_depth > 0:
+            imbalance = market.bid_depth / total_depth
+        else:
+            log.debug("Zero orderbook depth — skipping maker quotes")
+            imbalance = 1.0
         pull_asks = imbalance > IMBALANCE_THRESHOLD
 
         mid = (market.yes_bid + market.yes_ask) / 2

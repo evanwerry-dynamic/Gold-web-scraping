@@ -7,7 +7,9 @@ from polymarket.risk import RiskManager
 
 @pytest.fixture
 def oracle():
-    return OracleBuffer(bankroll=1000.0, paper_trading=True)
+    o = OracleBuffer(bankroll=1000.0, paper_trading=True)
+    o.peak_bankroll = 1000.0
+    return o
 
 
 @pytest.fixture

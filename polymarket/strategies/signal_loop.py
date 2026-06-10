@@ -25,9 +25,9 @@ from polymarket.calibrator import LIVE_PARAMS
 log = logging.getLogger(__name__)
 
 # Env-var defaults for initial startup (overridden by LIVE_PARAMS at runtime)
-_ENTRY_WINDOW_SECONDS_DEFAULT = float(os.getenv("ENTRY_SECONDS_BEFORE_CLOSE", "10"))
+_ENTRY_WINDOW_SECONDS_DEFAULT = float(os.getenv("ENTRY_SECONDS_BEFORE_CLOSE", "12"))  # +2s for CLOB submission latency
 _MIN_DELTA_DEFAULT = float(os.getenv("MIN_DELTA_THRESHOLD", "0.001"))
-_MIN_EDGE_NET_DEFAULT = float(os.getenv("MIN_EDGE_NET", "0.05"))
+_MIN_EDGE_NET_DEFAULT = float(os.getenv("MIN_EDGE_NET", "0.07"))  # 7¢: covers 2-tick slip + fee drift
 SCAN_INTERVAL = 2.0  # seconds between signal evaluations
 
 

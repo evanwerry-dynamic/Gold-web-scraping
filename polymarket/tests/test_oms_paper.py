@@ -41,12 +41,16 @@ def _market_order(
 
 @pytest.fixture(autouse=True)
 def clear_oms_state():
-    """Reset OMS module-level state before each test."""
+    """Reset OMS module-level state and disable friction for deterministic tests."""
     oms_module._filled_order_ids.clear()
     oms_module._pending_market_keys.clear()
+    # Disable paper friction (slippage/rejection/fee) for exact bankroll assertions
+    original = oms_module.PAPER_FRICTION
+    oms_module.PAPER_FRICTION = False
     yield
     oms_module._filled_order_ids.clear()
     oms_module._pending_market_keys.clear()
+    oms_module.PAPER_FRICTION = original
 
 
 class TestPaperFill:

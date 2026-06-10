@@ -34,6 +34,11 @@ GTC_TIMEOUT = 30.0         # seconds before GTC is cancelled
 # re-entering is negligible given order IDs encode millisecond timestamps.
 _filled_order_ids: deque = deque(maxlen=2000)
 
+# Paper friction model: slippage + FOK rejection + fee deduction.
+# Set to False in tests that need deterministic exact bankroll values.
+import os as _os
+PAPER_FRICTION: bool = _os.getenv("PAPER_FRICTION", "true").lower() != "false"
+
 # M8: track pending market keys to deduplicate OMS orders
 _pending_market_keys: set[str] = set()
 
@@ -141,16 +146,59 @@ async def _paper_fill(
     risk_mgr: RiskManager,
     is_momentum: bool = False,
 ) -> None:
-    """Simulate a fill in paper trading mode."""
+    """Simulate a fill in paper trading mode with realistic live-trading friction.
+
+    Three live gaps are modelled here so paper stats match live closely:
+    1. Slippage: FOK orders add 0–2 ticks (uniform random) to fill price.
+       Live CLOB WS price is 0.5–2s stale; the ask may have moved by fill time.
+    2. FOK rejection: 15% of momentum FOK orders are rejected (no fill, no debit).
+       At T<10s, other bots hit the same thin ask level; incomplete books → FOK cancel.
+    3. Taker fee deducted from bankroll: CLOB charges fee at fill, not at signal.
+       Paper previously understated cost by ~1% per trade (fee was only in edge gate).
+    """
+    import random
+    from polymarket.fair_value import dynamic_taker_fee
+
     if is_momentum:
         oracle.strategy_phase = "FILL"
-    fill_price = intent.get("price", 0.5)
+    quoted_price = intent.get("price", 0.5)
     shares = intent.get("shares", 0.0)
     dollar_size = intent.get("dollar_size", 0.0)
 
     if intent.get("order_type") == "POST_ONLY":
-        log.info(f"[OMS/paper] POST_ONLY placed: {order_id} @ {fill_price:.3f}")
-        return  # No phase change — maker quotes are silent background activity
+        log.info(f"[OMS/paper] POST_ONLY placed: {order_id} @ {quoted_price:.3f}")
+        return  # Maker quotes don't have slippage or rejection
+
+    if PAPER_FRICTION:
+        # Gap 2: FOK rejection — 15% of FOK orders get no fill at thin T<10s books
+        if intent.get("order_type") == "FOK" and random.random() < 0.15:
+            log.info(
+                f"[OMS/paper] FOK REJECTED (simulated thin liquidity): "
+                f"{intent.get('strategy')} {intent.get('side')} @ {quoted_price:.3f}"
+            )
+            if is_momentum:
+                oracle.strategy_phase = "HOLD"
+            return
+
+        # Gap 1: Slippage — 0 to 2 ticks worse than quoted ask (uniform, per tick = 0.01)
+        slip_ticks = random.randint(0, 2)
+        fill_price = min(quoted_price + slip_ticks * 0.01, 0.99)  # cap at $0.99
+        if slip_ticks > 0:
+            log.debug(
+                f"[OMS/paper] Slippage: {slip_ticks} tick(s) "
+                f"({quoted_price:.3f} → {fill_price:.3f})"
+            )
+
+        # Gap 3: Taker fee charged at fill — deducted from bankroll separately
+        taker_fee = dynamic_taker_fee(fill_price) * dollar_size
+        total_cost = dollar_size + taker_fee
+    else:
+        fill_price = quoted_price
+        taker_fee = 0.0
+        total_cost = dollar_size
+
+    # Recalculate shares at actual fill price (not quoted)
+    actual_shares = dollar_size / max(fill_price, 0.01)
 
     # Simulate position — use .get() so partially-formed arb orders don't crash
     pos = OpenPosition(
@@ -158,14 +206,15 @@ async def _paper_fill(
         condition_id=intent.get("condition_id") or "unknown",
         token_id=intent.get("token_id") or intent.get("yes_token_id") or "unknown",
         side=intent.get("side", "YES"),
-        shares=shares or (dollar_size / max(fill_price, 0.01)),
+        shares=actual_shares,
         cost_basis=dollar_size,
         window_open_price=intent.get("window_open_price", 0.0),
     )
     # C3/H10: protect bankroll and open_positions mutations with lock
     async with oracle.bankroll_lock:
         oracle.open_positions[order_id] = pos
-        oracle.bankroll -= dollar_size
+        oracle.bankroll -= total_cost  # includes taker fee
+        oracle.peak_bankroll = max(oracle.peak_bankroll, oracle.bankroll)
 
     trade_record = {
         "order_id": order_id,
@@ -174,8 +223,11 @@ async def _paper_fill(
         "side": intent.get("side"),
         "fair_value": intent.get("fair"),
         "entry_price": fill_price,
+        "quoted_price": quoted_price,
+        "slippage": round(fill_price - quoted_price, 3),
+        "taker_fee": round(taker_fee, 4),
         "edge": intent.get("edge"),
-        "shares": shares,
+        "shares": actual_shares,
         "dollar_size": dollar_size,
         "paper": True,
     }
@@ -195,7 +247,10 @@ async def _paper_fill(
         "paper": True,
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     })
-    log.info(f"[OMS/paper] Filled: {order_id} {shares:.2f}sh @ {fill_price:.3f}")
+    log.info(
+        f"[OMS/paper] Filled: {order_id} {actual_shares:.2f}sh @ {fill_price:.3f} "
+        f"(slip={fill_price - quoted_price:+.3f}, fee={taker_fee:.3f})"
+    )
     if is_momentum:
         oracle.strategy_phase = "HOLD"
 

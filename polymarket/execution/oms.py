@@ -12,6 +12,7 @@ Key guarantees:
 import asyncio
 import datetime
 import logging
+import os
 import time
 from collections import deque
 from enum import Enum
@@ -22,24 +23,21 @@ from polymarket.risk import RiskManager
 
 log = logging.getLogger(__name__)
 
-# H8: removed module-level PAPER_TRADING — use oracle.paper_trading exclusively
+# Use oracle.paper_trading exclusively; module-level flag only for _cancel_all
+PAPER_TRADING = os.getenv("PAPER_TRADING", "true").lower() == "true"
+# Set PAPER_FRICTION=false in unit tests that need exact bankroll values
+PAPER_FRICTION: bool = os.getenv("PAPER_FRICTION", "true").lower() != "false"
+
 ORDER_CONCURRENCY = 3
 FILL_POLL_INTERVAL = 1.0   # seconds between fill status checks
 FOK_TIMEOUT = 5.0          # seconds before FOK is considered failed
 GTC_TIMEOUT = 30.0         # seconds before GTC is cancelled
 
-# H11: track filled order IDs to prevent double-debit.
+# Track filled order IDs to prevent double-debit.
 # Bounded to prevent memory leak — 2000 entries covers weeks of trading.
-# Oldest entries are evicted after 2000 fills; the risk of a stale ID collision
-# re-entering is negligible given order IDs encode millisecond timestamps.
 _filled_order_ids: deque = deque(maxlen=2000)
 
-# Paper friction model: slippage + FOK rejection + fee deduction.
-# Set PAPER_FRICTION=false in tests that need deterministic exact bankroll values.
-import os as _os
-PAPER_FRICTION: bool = _os.getenv("PAPER_FRICTION", "true").lower() != "false"
-
-# M8: track pending market keys to deduplicate OMS orders
+# Track pending market keys to deduplicate OMS orders
 _pending_market_keys: set[str] = set()
 
 
@@ -83,13 +81,13 @@ async def _process_order(
         log.info(f"[OMS] Order dropped — emergency halt active ({intent.get('strategy')})")
         return
 
-    # H12: discard stale orders older than 8s
+    # Discard stale orders older than 8s
     age = time.time() - intent.get("queued_at", time.time())
     if age > 8.0:
         log.warning(f"[OMS] Discarding stale {intent.get('strategy')} order ({age:.1f}s old)")
         return
 
-    # M8: deduplicate orders by market_id + strategy + side.
+    # Deduplicate orders by market_id + strategy + side.
     # Side must be included so that arb bundles (YES + NO on same market)
     # and maker pairs (BUY bid + SELL ask) each get through as distinct orders.
     key = f"{intent.get('market_id')}-{intent.get('strategy')}-{intent.get('side', '')}"
@@ -111,7 +109,6 @@ async def _process_order_inner(
 ) -> None:
     async with sem:
         # Only momentum (Strategy A) drives the strategy phase display.
-        # Strategy B/C orders are background — don't let them stomp the phase.
         is_momentum = intent.get("strategy") == "A"
         if is_momentum:
             oracle.strategy_phase = "LIMIT"
@@ -122,7 +119,6 @@ async def _process_order_inner(
             f"${intent.get('dollar_size', 0):.2f} @ {intent.get('price', 0):.3f}"
         )
 
-        # H8: use oracle.paper_trading exclusively
         if oracle.paper_trading:
             await _paper_fill(intent, order_id, oracle, risk_mgr, is_momentum)
             return
@@ -221,7 +217,6 @@ async def _paper_fill(
 
     actual_shares = dollar_size / max(fill_price, 0.01)
 
-    # Simulate position
     pos = OpenPosition(
         market_id=intent.get("market_id") or "unknown",
         condition_id=intent.get("condition_id") or "unknown",
@@ -231,10 +226,9 @@ async def _paper_fill(
         cost_basis=dollar_size,
         window_open_price=intent.get("window_open_price", 0.0),
     )
-    # C3/H10: protect bankroll and open_positions mutations with lock
     async with oracle.bankroll_lock:
         oracle.open_positions[order_id] = pos
-        oracle.bankroll -= total_cost  # includes taker fee
+        oracle.bankroll -= total_cost
         oracle.peak_bankroll = max(oracle.peak_bankroll, oracle.bankroll)
 
     trade_record = {
@@ -280,7 +274,7 @@ async def _submit_to_clob(intent: dict, order_id: str) -> dict:
     from polymarket.execution.wallet import get_clob_client
 
     client = get_clob_client()
-    loop = asyncio.get_running_loop()  # L4: replaced get_event_loop
+    loop = asyncio.get_running_loop()
     order_type_str = intent.get("order_type", "GTC")
     token_id = intent["token_id"]
 
@@ -331,10 +325,9 @@ async def _track_until_terminal(
     from polymarket.execution.wallet import get_clob_client
     from polymarket.data import append_trade
 
-    # polymarket API may return orderID or id depending on version
     tracked_id = resp.get("orderID") or resp.get("id") or "unknown"
     client = get_clob_client()
-    loop = asyncio.get_running_loop()  # L4: replaced get_event_loop
+    loop = asyncio.get_running_loop()
     timeout = FOK_TIMEOUT if intent.get("order_type") == "FOK" else GTC_TIMEOUT
     deadline = time.time() + timeout
 
@@ -345,7 +338,7 @@ async def _track_until_terminal(
             status = (order.get("status") or "").lower()
 
             if status in ("matched", "filled"):
-                # H11: prevent double-debit for same order
+                # Prevent double-debit for same order
                 if tracked_id in _filled_order_ids:
                     log.warning(f"[OMS] Skipping already-debited order: {tracked_id}")
                     return
@@ -363,7 +356,6 @@ async def _track_until_terminal(
                     shares=shares,
                     cost_basis=dollar_size,
                 )
-                # C3/H10: protect bankroll and open_positions mutations with lock
                 async with oracle.bankroll_lock:
                     oracle.open_positions[tracked_id] = pos
                     oracle.bankroll -= dollar_size
@@ -405,7 +397,7 @@ async def _track_until_terminal(
         log.warning(f"[OMS/live] Cancel failed for {tracked_id}: {exc!r}")
         cancel_failed = True
 
-    # M9: after cancel failure, do a final poll to catch late fills
+    # After cancel failure, do a final poll to catch late fills
     if cancel_failed:
         await asyncio.sleep(2)
         try:
@@ -436,7 +428,6 @@ async def _track_until_terminal(
 
 async def _cancel_all(oracle: OracleBuffer) -> None:
     """Cancel all open maker quotes."""
-    # H1: actual implementation
     if oracle.paper_trading:
         log.info("[OMS/paper] cancel_all (no-op in paper mode)")
         return

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useRef } from "react";
-import { useTradesStore } from "@/store";
+import { useTradesStore, Trade } from "@/store";
 
 interface Node {
   id: string;
@@ -10,7 +10,13 @@ interface Node {
   vy: number;
   size: number;
   color: string;
-  pnl: number;
+  pnl: number | null;
+}
+
+function nodeColor(pnl: number | null, action?: string | null): string {
+  if (action === "rejected") return "#ff4466";
+  if (pnl === null) return "#4488ff";   // OPEN = blue
+  return pnl >= 0 ? "#00ff88" : "#ff4466";
 }
 
 export function MicrostructureMesh() {
@@ -21,7 +27,6 @@ export function MicrostructureMesh() {
 
   const lastTradeIdRef = useRef<string | null>(null);
 
-  // Add new nodes only when a brand-new trade id arrives; update color on resolution
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || trades.length === 0) return;
@@ -35,31 +40,33 @@ export function MicrostructureMesh() {
     // Tab switch / first mount: nodesRef was reset to []. Bulk-seed all existing trades
     // so the mesh is fully populated immediately without waiting for new arrivals.
     if (nodesRef.current.length === 0) {
-      nodesRef.current = trades.slice(0, 80).map((t) => ({
+      nodesRef.current = trades.slice(0, 80).map((t: Trade) => ({
         id: t.id,
         x: Math.random() * w,
         y: Math.random() * h,
         vx: (Math.random() - 0.5) * 1.5,
         vy: (Math.random() - 0.5) * 1.5,
         size: Math.max(4, Math.min(20, Math.abs(t.dollar_size / 10))),
-        color: t.pnl === null ? "#888888" : t.pnl >= 0 ? "#00ff88" : "#ff4466",
-        pnl: t.pnl ?? 0,
+        color: nodeColor(t.pnl, t.action),
+        pnl: t.pnl,
       }));
       lastTradeIdRef.current = trades[0].id;
       return;
     }
 
-    const latest = trades[0];
-    // P&L resolution for existing trade — recolor its node only
-    if (latest.id === lastTradeIdRef.current) {
-      if (latest.pnl !== null) {
-        const node = nodesRef.current.find((n) => n.id === latest.id);
-        if (node) node.color = latest.pnl >= 0 ? "#00ff88" : "#ff4466";
+    // Recolor any node whose trade has resolved (pnl changed from null to a value)
+    for (const node of nodesRef.current) {
+      const trade = trades.find((t: Trade) => t.id === node.id);
+      if (trade && trade.pnl !== null && node.pnl === null) {
+        node.pnl = trade.pnl;
+        node.color = nodeColor(trade.pnl, trade.action);
       }
-      return;
     }
+
+    const latest = trades[0];
+    if (latest.id === lastTradeIdRef.current) return;
     lastTradeIdRef.current = latest.id;
-    const pnl = latest.pnl ?? 0;
+
     nodesRef.current = [
       {
         id: latest.id,
@@ -68,8 +75,8 @@ export function MicrostructureMesh() {
         vx: (Math.random() - 0.5) * 1.5,
         vy: (Math.random() - 0.5) * 1.5,
         size: Math.max(4, Math.min(20, Math.abs(latest.dollar_size / 10))),
-        color: pnl >= 0 ? "#00ff88" : "#ff4466",
-        pnl,
+        color: nodeColor(latest.pnl, latest.action),
+        pnl: latest.pnl,
       },
       ...nodesRef.current.slice(0, 80),
     ];
@@ -130,12 +137,13 @@ export function MicrostructureMesh() {
         ctx.fillStyle = n.color;
         ctx.fill();
 
-        // P&L label
-        if (Math.abs(n.pnl) >= 5) {
+        // P&L label (only for resolved trades with significant size)
+        const displayPnl = n.pnl ?? 0;
+        if (n.pnl !== null && Math.abs(displayPnl) >= 5) {
           ctx.fillStyle = n.color;
           ctx.font = "9px monospace";
           ctx.fillText(
-            `${n.pnl >= 0 ? "+" : ""}$${Math.abs(n.pnl).toFixed(0)}`,
+            `${displayPnl >= 0 ? "+" : ""}$${Math.abs(displayPnl).toFixed(0)}`,
             n.x + n.size + 2,
             n.y + 3
           );

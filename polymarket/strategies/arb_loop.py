@@ -61,6 +61,7 @@ async def arb_loop(
             bundle_orders = _scan_bundle_arb(
                 m.yes_ask, m.no_ask, m.market_id, m.condition_id,
                 m.yes_token_id, m.no_token_id,
+                bankroll=oracle.bankroll,
             )
             for yes_order, no_order in bundle_orders:
                 log.info(f"[C] Bundle arb: yes={yes_order['price']:.3f} no={no_order['price']:.3f} profit={yes_order.get('net_profit', 0):.4f}")
@@ -68,7 +69,7 @@ async def arb_loop(
                 await order_queue.put({**no_order, "strategy": "C", "order_type": "FOK", "queued_at": time.time()})
 
         # Type 2: Monotonicity violations across BTC strike markets — C4: queue BOTH legs atomically
-        violations = _scan_monotonicity(markets)
+        violations = _scan_monotonicity(markets, bankroll=oracle.bankroll)
         for yes_order, no_order in violations:
             log.info(f"[C] Monotonicity violation: yes={yes_order['price']:.3f} no={no_order['price']:.3f} spread={yes_order.get('spread', 0):.4f}")
             await order_queue.put({**yes_order, "strategy": "C", "order_type": "FOK", "queued_at": time.time()})
@@ -82,6 +83,7 @@ def _scan_bundle_arb(
     condition_id: str,
     yes_token_id: str,
     no_token_id: str,
+    bankroll: float = 1000.0,
 ) -> list[tuple[dict, dict]]:
     """YES + NO combined should cost ≥ $1.00. If less, guaranteed profit.
     C4: Returns list of (yes_order, no_order) pairs for atomic submission.
@@ -94,6 +96,13 @@ def _scan_bundle_arb(
     if net < MIN_BUNDLE_PROFIT:
         return []
 
+    # Cap each leg at 1.5% of bankroll — same rule as Strategy A.
+    # Bundle arb is theoretically risk-free but one FOK leg can fail,
+    # leaving a directional position. Sizing must survive that worst case.
+    leg_size = min(10.0, bankroll * 0.015)
+    if leg_size < 1.0:
+        return []  # Too small to be worth the gas
+
     arb_pair_id = f"arb-{market_id}-{int(time.time())}"
     yes_order = {
         "action": "bundle_arb",
@@ -102,7 +111,7 @@ def _scan_bundle_arb(
         "token_id": yes_token_id,
         "side": "YES",
         "price": yes_ask,
-        "dollar_size": 10.0,
+        "dollar_size": leg_size,
         "yes_ask": yes_ask,
         "no_ask": no_ask,
         "net_profit": net,
@@ -115,7 +124,7 @@ def _scan_bundle_arb(
         "token_id": no_token_id,
         "side": "NO",
         "price": no_ask,
-        "dollar_size": 10.0,
+        "dollar_size": leg_size,
         "yes_ask": yes_ask,
         "no_ask": no_ask,
         "net_profit": net,
@@ -124,7 +133,7 @@ def _scan_bundle_arb(
     return [(yes_order, no_order)]
 
 
-def _scan_monotonicity(markets: list[dict]) -> list[tuple[dict, dict]]:
+def _scan_monotonicity(markets: list[dict], bankroll: float = 1000.0) -> list[tuple[dict, dict]]:
     """
     P(BTC > higher_strike) must be ≤ P(BTC > lower_strike).
     Any violation: buy YES at lower strike, buy NO at higher strike.
@@ -145,6 +154,9 @@ def _scan_monotonicity(markets: list[dict]) -> list[tuple[dict, dict]]:
         spread = hi["yes_price"] - lo["yes_price"]
         if spread < -MIN_MONOTONICITY_SPREAD:  # hi strike has HIGHER yes_price — violation
             buy_no_price = 1.0 - hi["yes_price"]
+            leg_size = min(10.0, bankroll * 0.015)
+            if leg_size < 1.0:
+                continue
             arb_pair_id = f"arb-{lo['market_id']}-{int(time.time())}"
             yes_order = {
                 "action": "monotonicity_arb",
@@ -153,7 +165,7 @@ def _scan_monotonicity(markets: list[dict]) -> list[tuple[dict, dict]]:
                 "token_id": lo["yes_token_id"],
                 "side": "YES",
                 "price": lo["yes_price"],
-                "dollar_size": 10.0,
+                "dollar_size": leg_size,
                 "spread": spread,
                 "arb_pair_id": arb_pair_id,
             }
@@ -164,7 +176,7 @@ def _scan_monotonicity(markets: list[dict]) -> list[tuple[dict, dict]]:
                 "token_id": hi["no_token_id"],
                 "side": "NO",
                 "price": buy_no_price,
-                "dollar_size": 10.0,
+                "dollar_size": leg_size,
                 "spread": spread,
                 "arb_pair_id": arb_pair_id,
             }

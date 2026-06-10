@@ -12,7 +12,7 @@ import logging
 import time
 
 from polymarket.oracle_buffer import OracleBuffer
-from polymarket.execution.wallet import get_matic_balance, get_pusd_balance, approve_pusd_max
+from polymarket.execution.wallet import get_matic_balance, get_pusd_balance, approve_pusd
 
 log = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ async def _check_pusd_allowance(oracle: OracleBuffer) -> None:
             f"pUSD allowance low ({pusd_bal:.2f} < {oracle.bankroll * 0.5:.2f}) "
             "— re-approving CTF Exchange"
         )
-        await approve_pusd_max()
+        await approve_pusd(oracle.bankroll * 2)
         # Verify the re-approve worked
         pusd_bal_after = await get_pusd_balance()
         if pusd_bal_after < oracle.bankroll * 0.5:

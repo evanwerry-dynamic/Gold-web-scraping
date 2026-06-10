@@ -109,6 +109,9 @@ class OracleBuffer:
     # M12: active price source for dashboard
     active_price_source: str = "none"
 
+    # Peak bankroll for drawdown calculation (updated on every fill, displayed in dashboard)
+    peak_bankroll: float = 0.0
+
     # Emergency kill switch — set True to stop all order submission immediately.
     # Feeds, resolve, and redeem loops continue running so existing positions
     # are settled correctly. Set False to resume trading.

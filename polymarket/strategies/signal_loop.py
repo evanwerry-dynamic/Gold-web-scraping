@@ -19,12 +19,15 @@ import time
 from polymarket.fair_value import fair_value_binary, should_trade
 from polymarket.oracle_buffer import OracleBuffer
 from polymarket.risk import RiskManager, kelly_size
+# H3: import LIVE_PARAMS so calibrator updates are picked up at runtime
+from polymarket.calibrator import LIVE_PARAMS
 
 log = logging.getLogger(__name__)
 
-ENTRY_WINDOW_SECONDS = float(os.getenv("ENTRY_SECONDS_BEFORE_CLOSE", "10"))
-MIN_DELTA = float(os.getenv("MIN_DELTA_THRESHOLD", "0.001"))     # 0.10%
-MIN_EDGE_NET = float(os.getenv("MIN_EDGE_NET", "0.05"))           # 5¢
+# Env-var defaults for initial startup (overridden by LIVE_PARAMS at runtime)
+_ENTRY_WINDOW_SECONDS_DEFAULT = float(os.getenv("ENTRY_SECONDS_BEFORE_CLOSE", "10"))
+_MIN_DELTA_DEFAULT = float(os.getenv("MIN_DELTA_THRESHOLD", "0.001"))
+_MIN_EDGE_NET_DEFAULT = float(os.getenv("MIN_EDGE_NET", "0.05"))
 SCAN_INTERVAL = 2.0  # seconds between signal evaluations
 
 
@@ -34,16 +37,22 @@ async def signal_loop(
     risk_mgr: RiskManager,
 ) -> None:
     """Strategy A signal evaluation. Never exits."""
-    log.info("Strategy A (late-window momentum) starting...")
+    log.info("Strategy A (late-window momentum) starting — waiting for price feed...")
+    await oracle.price_ready.wait()
+    log.info("Strategy A: price feed ready, entering signal loop")
     last_fired_window: str | None = None
 
     while True:
         await asyncio.sleep(SCAN_INTERVAL)
 
-        # Emergency halt — block all new orders immediately
         if oracle.emergency_halt:
-            oracle.strategy_phase = "SCAN"
+            oracle.strategy_phase = "HALT"
             continue
+
+        # H3: read live calibrated parameters each iteration
+        MIN_DELTA = LIVE_PARAMS.get("min_delta_threshold", _MIN_DELTA_DEFAULT)
+        MIN_EDGE_NET = LIVE_PARAMS.get("min_edge_net", _MIN_EDGE_NET_DEFAULT)
+        ENTRY_WINDOW_SECONDS = LIVE_PARAMS.get("entry_seconds_before_close", _ENTRY_WINDOW_SECONDS_DEFAULT)
 
         market = oracle.active_market
         if market is None:
@@ -67,6 +76,13 @@ async def signal_loop(
         if last_fired_window == market.market_id:
             continue
 
+        # Block trades until the vol estimator has real data (≥5 samples).
+        # With the 0.0002 fallback sigma and only 1-2 samples, z-scores are
+        # wildly inflated and fair_value collapses to 0.0 or 1.0 on any small delta.
+        if not oracle.vol_estimator.is_ready():
+            log.debug("[A] Vol estimator not ready (< 5 samples) — skipping")
+            continue
+
         delta = oracle.window_delta()
         if abs(delta) < MIN_DELTA:
             log.info(
@@ -87,13 +103,18 @@ async def signal_loop(
         )
 
         oracle.strategy_phase = "EDGE"
-        ask = market.yes_ask if direction == "UP" else market.no_ask
-        tradeable, net_edge = should_trade(fair, ask, MIN_EDGE_NET)
+        if direction == "UP":
+            ask = market.yes_ask
+            fair_direction = fair            # P(UP wins)
+        else:
+            ask = market.no_ask
+            fair_direction = 1.0 - fair     # P(DOWN wins) = complement of P(UP)
+        tradeable, net_edge = should_trade(fair_direction, ask, MIN_EDGE_NET)
 
         if not tradeable:
             log.debug(
-                f"[A] No trade: δ={delta:.4%} fair={fair:.3f} ask={ask:.3f} "
-                f"net_edge={net_edge:.4f}"
+                f"[A] No trade: δ={delta:.4%} fair_{direction}={fair_direction:.3f} "
+                f"ask={ask:.3f} net_edge={net_edge:.4f}"
             )
             continue
 
@@ -109,7 +130,7 @@ async def signal_loop(
 
         oracle.strategy_phase = "LIMIT"
         sizing = kelly_size(
-            fair_prob=fair,
+            fair_prob=fair_direction,
             market_price=ask,
             bankroll=oracle.bankroll,
             scale_factor=risk_mgr.position_scale_factor(),
@@ -128,7 +149,7 @@ async def signal_loop(
             "price": ask,
             "dollar_size": sizing["dollar_size"],
             "shares": sizing["shares"],
-            "fair": fair,
+            "fair": fair_direction,
             "edge": net_edge,
             "delta": delta,
             "order_type": "FOK",

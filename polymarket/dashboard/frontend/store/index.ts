@@ -14,6 +14,9 @@ export interface Trade {
   pnl: number | null;
   paper: boolean;
   timestamp: string;
+  btc_open?: number | null;
+  btc_settle?: number | null;
+  btc_delta_pct?: number | null;
 }
 
 export interface Position {
@@ -53,6 +56,7 @@ export interface Health {
   open_positions: number;
   strategy_phase: string;
   btc_price: number;
+  halted: boolean;
 }
 
 // ── Stores ────────────────────────────────────────────────────────────────────
@@ -101,11 +105,23 @@ export const useTradesStore = create<{
 export const usePositionsStore = create<{
   positions: Record<string, Position>;
   update: (p: Position) => void;
+  sync: (marketIds: string[]) => void;
   clear: () => void;
 }>((set) => ({
   positions: {},
   update: (p) =>
     set((s) => ({ positions: { ...s.positions, [p.market_id]: p } })),
+  sync: (marketIds) =>
+    set((s) => {
+      const keep = new Set(marketIds);
+      const next = Object.fromEntries(
+        Object.entries(s.positions).filter(([k]) => keep.has(k)),
+      );
+      // Only trigger a re-render if something actually changed
+      return Object.keys(next).length === Object.keys(s.positions).length
+        ? s
+        : { positions: next };
+    }),
   clear: () => set({ positions: {} }),
 }));
 
@@ -145,6 +161,7 @@ export const useHealthStore = create<{
     open_positions: 0,
     strategy_phase: "SCAN",
     btc_price: 0,
+    halted: false,
   },
   btcHistory: [],
   update: (h: Partial<Health>) =>

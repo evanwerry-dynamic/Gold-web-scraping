@@ -50,6 +50,9 @@ class RiskManager:
         if self.initial <= 0 or self.daily_start <= 0 or self.monthly_start <= 0:
             return False, "RiskManager not properly initialised (zero bankroll)"
 
+        if self.initial <= 0 or self.daily_start <= 0 or self.monthly_start <= 0:
+            return False, "RiskManager not properly initialised (zero bankroll)"
+
         # Permanent halt
         total_loss_pct = (self.initial - current_bankroll) / self.initial
         if total_loss_pct > self.total_loss_limit:

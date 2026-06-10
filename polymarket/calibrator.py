@@ -21,6 +21,36 @@ log = logging.getLogger(__name__)
 CALIBRATION_INTERVAL = 86400.0  # 24 hours
 MIN_TRADES_FOR_CALIBRATION = 20
 
+# H3: module-level live params that signal_loop imports and reads each iteration
+LIVE_PARAMS: dict = {
+    "min_delta_threshold": 0.001,
+    "min_edge_net": 0.05,
+    "entry_seconds_before_close": 10.0,
+}
+
+# H5: valid ranges for calibrator parameters
+PARAM_RANGES = {
+    "min_delta_threshold": (0.0005, 0.005),
+    "min_edge_net": (0.02, 0.15),
+    "entry_seconds_before_close": (5.0, 30.0),
+}
+
+
+def _validate_params(p: dict) -> bool:
+    """H5: Validate calibrator response is within safe ranges."""
+    for k, (lo, hi) in PARAM_RANGES.items():
+        if k not in p:
+            log.critical(f"Calibrator param {k} missing — rejecting")
+            return False
+        v = float(p[k])
+        if not (lo <= v <= hi):
+            log.critical(f"Calibrator param {k}={v} out of range [{lo}, {hi}] — rejecting")
+            return False
+    if set(p.keys()) - set(PARAM_RANGES.keys()):
+        log.critical(f"Calibrator returned unexpected keys: {set(p.keys())} — rejecting")
+        return False
+    return True
+
 
 async def calibrator_loop() -> None:
     """Nightly recalibration via Claude. Never exits."""
@@ -117,6 +147,12 @@ Example: {{"min_delta_threshold": 0.0012, "min_edge_net": 0.06, "entry_seconds_b
         raw = resp.content[0].text.strip()
         new_params = ast.literal_eval(raw)
         if isinstance(new_params, dict):
+            # H5: validate ranges before applying
+            if not _validate_params(new_params):
+                log.error(f"Claude calibration rejected (out-of-range params): {new_params}")
+                return
+            # H3: update LIVE_PARAMS so signal_loop picks them up on next iteration
+            LIVE_PARAMS.update(new_params)
             state = await loop.run_in_executor(None, load_state)
             state["strategy_params"] = new_params
             await loop.run_in_executor(None, save_state, state)

@@ -25,8 +25,32 @@ export function MicrostructureMesh() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || trades.length === 0) return;
+
+    // canvas.width/height are HTML attributes set by ResizeObserver (async, fires after
+    // useEffect). Use getBoundingClientRect() which reads the CSS layout size synchronously.
+    const rect = canvas.getBoundingClientRect();
+    const w = rect.width || canvas.width || 600;
+    const h = rect.height || canvas.height || 400;
+
+    // Tab switch / first mount: nodesRef was reset to []. Bulk-seed all existing trades
+    // so the mesh is fully populated immediately without waiting for new arrivals.
+    if (nodesRef.current.length === 0) {
+      nodesRef.current = trades.slice(0, 80).map((t) => ({
+        id: t.id,
+        x: Math.random() * w,
+        y: Math.random() * h,
+        vx: (Math.random() - 0.5) * 1.5,
+        vy: (Math.random() - 0.5) * 1.5,
+        size: Math.max(4, Math.min(20, Math.abs(t.dollar_size / 10))),
+        color: t.pnl === null ? "#888888" : t.pnl >= 0 ? "#00ff88" : "#ff4466",
+        pnl: t.pnl ?? 0,
+      }));
+      lastTradeIdRef.current = trades[0].id;
+      return;
+    }
+
     const latest = trades[0];
-    // pnl update for existing trade — recolor its node
+    // P&L resolution for existing trade — recolor its node only
     if (latest.id === lastTradeIdRef.current) {
       if (latest.pnl !== null) {
         const node = nodesRef.current.find((n) => n.id === latest.id);
@@ -39,8 +63,8 @@ export function MicrostructureMesh() {
     nodesRef.current = [
       {
         id: latest.id,
-        x: Math.random() * canvas.width,
-        y: Math.random() * canvas.height,
+        x: Math.random() * w,
+        y: Math.random() * h,
         vx: (Math.random() - 0.5) * 1.5,
         vy: (Math.random() - 0.5) * 1.5,
         size: Math.max(4, Math.min(20, Math.abs(latest.dollar_size / 10))),

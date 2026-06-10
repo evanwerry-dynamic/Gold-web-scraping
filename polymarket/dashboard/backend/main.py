@@ -2,9 +2,9 @@
 Mad Scientist Dashboard — FastAPI WebSocket server.
 
 Serves:
-- GET  /         → Service info JSON
-- GET  /health   → JSON health check
-- WS   /ws       → Live dashboard event stream (broadcast to all tabs)
+- GET  /health → JSON health check
+- WS   /ws     → Live dashboard event stream (broadcast to all tabs)
+- GET  /*      → Next.js dashboard (static export, built into frontend/out)
 """
 import asyncio
 import json
@@ -13,16 +13,17 @@ import os
 import time
 from contextlib import asynccontextmanager
 
-import websockets
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from polymarket.dashboard.backend.bridge import set_connection_manager, get_oracle
 
 log = logging.getLogger(__name__)
 
-KRAKEN_WS_URL = "wss://ws.kraken.com/v2"
+_HERE = os.path.dirname(os.path.abspath(__file__))
+FRONTEND_DIR = os.path.normpath(os.path.join(_HERE, "..", "frontend", "out"))
 
 
 class ConnectionManager:
@@ -56,51 +57,8 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-async def _price_feed(mgr: ConnectionManager) -> None:
-    """
-    Standalone BTC price broadcaster — runs always, independent of the full bot.
-    Uses Kraken WebSocket (never blocked by cloud IPs, no auth needed).
-    Sends only ws_binance + btc_price so it doesn't override ws_clob from bridge.
-    """
-    log.info("Standalone price feed starting (Kraken WS)...")
-    while True:
-        try:
-            async with websockets.connect(KRAKEN_WS_URL, ping_interval=20) as ws:
-                await ws.send(json.dumps({
-                    "method": "subscribe",
-                    "params": {"channel": "ticker", "symbol": ["BTC/USD"]}
-                }))
-                log.info("Kraken WS connected — real BTC price active")
-                async for raw in ws:
-                    msg = json.loads(raw)
-                    if msg.get("channel") != "ticker" or msg.get("type") != "update":
-                        continue
-                    data = msg.get("data", [{}])[0]
-                    price = float(data.get("last", 0))
-                    if price <= 0:
-                        continue
-                    await mgr.broadcast(json.dumps({
-                        "type": "health",
-                        "data": {
-                            "ws_binance": True,
-                            "btc_price": round(price, 2),
-                        }
-                    }))
-        except Exception as exc:
-            log.warning(f"Price feed error: {exc!r} — retrying in 5s")
-            try:
-                await mgr.broadcast(json.dumps({"type": "health", "data": {"ws_binance": False}}))
-            except Exception:
-                pass
-            await asyncio.sleep(5)
-
-
 async def _clock_tick(mgr: ConnectionManager) -> None:
-    """Broadcast clock-derived seconds_remaining every second.
-
-    Ensures T-REMAINING always counts down in the dashboard even when the
-    bot's broadcast_loop is down or restarting.
-    """
+    """Broadcast clock-derived seconds_remaining every second."""
     while True:
         await asyncio.sleep(1.0)
         now = time.time()
@@ -135,18 +93,12 @@ async def lifespan(app: FastAPI):
     set_connection_manager(manager)
     log.info("Dashboard WebSocket server ready")
 
-    # Always run price feed and clock tick — work even if bot fails
-    price_task = asyncio.create_task(_price_feed(manager))
     tick_task = asyncio.create_task(_clock_tick(manager))
-
-    # Always start the bot — paper trading works without a private key.
-    # Live trading additionally requires POLYGON_PRIVATE_KEY (checked inside run()).
     bot_task = asyncio.create_task(_run_bot())
     log.info("Bot task created")
 
     yield
 
-    price_task.cancel()
     tick_task.cancel()
     if not bot_task.done():
         bot_task.cancel()
@@ -164,22 +116,46 @@ app.add_middleware(
 )
 
 
-@app.get("/")
-async def root():
+@app.get("/health")
+async def health():
+    oracle = get_oracle()
     return JSONResponse({
-        "service": "Mad Scientist Dashboard",
         "status": "ok",
-        "endpoints": {
-            "health": "/health",
-            "websocket": "/ws",
-            "dashboard": "https://evanwerry-dynamic.github.io/Gold-web-scraping/",
-        }
+        "clients": len(manager._active),
+        "halted": oracle.emergency_halt if oracle else False,
     })
 
 
-@app.get("/health")
-async def health():
-    return JSONResponse({"status": "ok", "clients": len(manager._active)})
+@app.post("/halt")
+async def halt():
+    """Emergency kill switch — stop all new order submission immediately."""
+    oracle = get_oracle()
+    if oracle is None:
+        return JSONResponse({"error": "bot not running"}, status_code=503)
+    oracle.emergency_halt = True
+    log.warning("EMERGENCY HALT ACTIVATED via dashboard")
+    # Best-effort cancel all live CLOB orders
+    if not oracle.paper_trading:
+        try:
+            from polymarket.execution.wallet import get_clob_client
+            client = get_clob_client()
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, client.cancel_all)
+            log.info("Cancel-all sent to CLOB on halt")
+        except Exception as exc:
+            log.warning(f"Cancel-all on halt failed: {exc!r}")
+    return JSONResponse({"halted": True})
+
+
+@app.post("/resume")
+async def resume():
+    """Resume trading after an emergency halt."""
+    oracle = get_oracle()
+    if oracle is None:
+        return JSONResponse({"error": "bot not running"}, status_code=503)
+    oracle.emergency_halt = False
+    log.info("Trading resumed via dashboard")
+    return JSONResponse({"halted": False})
 
 
 @app.post("/halt")
@@ -211,7 +187,7 @@ async def websocket_endpoint(ws: WebSocket):
         # Replay recent trade history so the feed populates immediately on connect
         try:
             from polymarket.data import load_trade_history
-            recent = load_trade_history(days=1)[-50:]  # Last 50 trades, max 1 day
+            recent = load_trade_history()[-200:]  # All-time last 200 (matches store max)
             for t in recent:
                 await ws.send_text(json.dumps({
                     "type": "trade",
@@ -227,13 +203,16 @@ async def websocket_endpoint(ws: WebSocket):
                         "pnl": t.get("pnl", None),
                         "paper": t.get("paper", True),
                         "timestamp": t.get("timestamp", ""),
+                        "btc_open": t.get("btc_open"),
+                        "btc_settle": t.get("btc_settle"),
+                        "btc_delta_pct": t.get("btc_delta_pct"),
                     }
                 }))
         except Exception as exc:
             log.debug(f"Trade history replay failed: {exc!r}")
 
         while True:
-            # Send a ping every 15s to keep Railway's proxy from killing idle connections
+            # Ping every 15s to keep Railway's proxy from killing idle connections
             try:
                 await asyncio.wait_for(ws.receive_text(), timeout=15.0)
             except asyncio.TimeoutError:
@@ -243,3 +222,12 @@ async def websocket_endpoint(ws: WebSocket):
     except Exception as exc:
         log.debug(f"WS error: {exc!r}")
         manager.disconnect(ws)
+
+
+# Serve the Next.js static export — MUST come after all explicit routes
+# so /health and /ws take priority over the catch-all file handler.
+if os.path.isdir(FRONTEND_DIR):
+    app.mount("/", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+    log.info(f"Serving frontend from {FRONTEND_DIR}")
+else:
+    log.warning(f"Frontend not built — {FRONTEND_DIR} not found. Run: npm run build in frontend/")

@@ -60,11 +60,12 @@ async def binance_ws_loop(oracle: OracleBuffer) -> None:
                         oracle.btc_price = price
                         oracle.vol_estimator.update(price)
                         oracle.last_binance_ts = time.time()
+                        oracle.price_ready.set()
+                        oracle.active_price_source = "binance"  # M12
 
-                        if oracle.active_market and not getattr(
-                            oracle.active_market, "window_open_price", None
-                        ):
-                            oracle.active_market.window_open_price = price  # type: ignore[attr-defined]
+                        market = oracle.active_market
+                        if market and not market.window_open_price:
+                            market.window_open_price = price
 
             except Exception as exc:
                 log.warning(f"Binance WS error: {exc!r} — retrying in 5s (Kraken fallback active)")
@@ -119,6 +120,8 @@ async def _kraken_ws_loop(oracle: OracleBuffer) -> None:
 
                     oracle.btc_price = price
                     oracle.last_binance_ts = time.time()
+                    oracle.price_ready.set()
+                    oracle.active_price_source = "kraken"  # M12
 
                     # Only feed vol estimator once per second — multiple ticks/s
                     # would fill the 30-sample window in seconds, measuring noise
@@ -127,10 +130,9 @@ async def _kraken_ws_loop(oracle: OracleBuffer) -> None:
                         oracle.vol_estimator.update(price)
                         _last_vol_ts = now
 
-                    if oracle.active_market and not getattr(
-                        oracle.active_market, "window_open_price", None
-                    ):
-                        oracle.active_market.window_open_price = price  # type: ignore[attr-defined]
+                    market = oracle.active_market
+                    if market and not market.window_open_price:
+                        market.window_open_price = price
 
         except Exception as exc:
             log.warning(f"Kraken WS error: {exc!r} — retrying in 5s")
@@ -141,22 +143,30 @@ async def _coingecko_rest_loop(oracle: OracleBuffer) -> None:
     """
     Last-resort feed: CoinGecko REST every 3s.
     Only activates if BOTH Binance and Kraken WebSockets are down.
+    M3: vol_estimator throttled to 1s cadence (same as Kraken fallback).
     """
     KRAKEN_GRACE = FRESHNESS_TIMEOUT + 10  # give Kraken time to connect first
+    _last_vol_ts: float = 0.0
     while True:
         await asyncio.sleep(3)
         if time.time() - oracle.last_binance_ts < KRAKEN_GRACE:
             continue
         try:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             resp = await loop.run_in_executor(
                 None,
                 lambda: requests.get(COINGECKO_URL, timeout=5).json()
             )
             price = float(resp["bitcoin"]["usd"])
             oracle.btc_price = price
-            oracle.vol_estimator.update(price)
             oracle.last_binance_ts = time.time()
+            oracle.price_ready.set()
+            oracle.active_price_source = "coingecko"  # M12
+            # M3: throttle vol_estimator to 1s cadence
+            now = time.time()
+            if now - _last_vol_ts >= 1.0:
+                oracle.vol_estimator.update(price)
+                _last_vol_ts = now
             log.info(f"CoinGecko last-resort: BTC=${price:,.2f}")
         except Exception as exc:
             log.warning(f"CoinGecko error: {exc!r}")

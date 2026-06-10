@@ -33,6 +33,13 @@ async def clob_ws_loop(oracle: OracleBuffer) -> None:
             await asyncio.sleep(2)
             continue
 
+        # Paper markets have synthetic token IDs — no real CLOB subscription possible.
+        # Keep the indicator green and skip the connection attempt.
+        if market.yes_token_id.startswith("paper-"):
+            oracle.last_clob_ts = time.time()
+            await asyncio.sleep(10)
+            continue
+
         try:
             async with websockets.connect(
                 CLOB_WS_URL,
@@ -58,7 +65,7 @@ async def clob_ws_loop(oracle: OracleBuffer) -> None:
                     async for raw in ws:
                         msg = json.loads(raw)
                         event_type = msg.get("event_type", "")
-                        oracle.last_clob_ts = time.time()
+                        # H6: do NOT update last_clob_ts here — only in _on_book_update and _on_trade
 
                         # Reconnect immediately when active market rotates — don't
                         # wait for the old connection to close on its own (can take minutes)
@@ -86,10 +93,14 @@ async def clob_ws_loop(oracle: OracleBuffer) -> None:
 
 
 async def _keepalive(oracle: OracleBuffer) -> None:
-    """Refresh last_clob_ts every 10s so ws_clob stays green while connected."""
+    """Refresh last_clob_connected_ts every 10s so we can distinguish keepalive
+    from real market data. H6: do NOT update last_clob_ts here — that is only
+    updated on real book/trade messages in _on_book_update() and _on_trade().
+    """
     while True:
         await asyncio.sleep(10)
-        oracle.last_clob_ts = time.time()
+        # H6: only update the keepalive-specific timestamp, not last_clob_ts
+        oracle.last_clob_connected_ts = time.time()
 
 
 def _update_orderbook(oracle: OracleBuffer, msg: dict) -> None:
@@ -103,6 +114,11 @@ def _update_orderbook(oracle: OracleBuffer, msg: dict) -> None:
 
     if not bids and not asks:
         return
+
+    # H6: update last_clob_ts on real book data
+    oracle.last_clob_ts = time.time()
+    # M5: track when we last got a book update
+    m.last_book_update_ts = time.time()
 
     # Only update each side when data is actually present — never write 0 for missing bids
     if bids:
@@ -125,5 +141,13 @@ def _update_orderbook(oracle: OracleBuffer, msg: dict) -> None:
 
 
 def _on_trade(oracle: OracleBuffer, msg: dict) -> None:
-    """Log fill events — actual position state is reconciled in sanity loop."""
-    log.debug(f"CLOB fill: {msg}")
+    """H9: Log trade fill events and update last_clob_ts.
+    If a makerOrderId matches an active position, log it for visibility.
+    Actual position reconciliation is handled by sanity loop.
+    """
+    # H6: update last_clob_ts on real trade data
+    oracle.last_clob_ts = time.time()
+    maker_order_id = msg.get("makerOrderId") or msg.get("maker_order_id", "")
+    log.info(f"CLOB trade event: makerOrderId={maker_order_id} full={msg}")
+    if maker_order_id and maker_order_id in oracle.open_positions:
+        log.warning(f"[CLOB] Trade event matches tracked position: {maker_order_id}")

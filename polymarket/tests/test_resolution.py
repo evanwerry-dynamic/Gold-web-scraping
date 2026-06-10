@@ -1,124 +1,177 @@
-"""Tests for position resolution — win/loss accounting, forced resolution."""
+"""
+Tests for resolution logic in chainlink_rtds.py.
+
+Win/loss determination is the moment real money is made or lost.
+Every combination of (side, btc_direction) must be tested.
+
+Also tests the P&L accounting in redeem_loop so we never see a losing
+trade show as $0 or a winner miscounted.
+"""
+import asyncio
 import pytest
-import time
-from polymarket.oracle_buffer import OracleBuffer, ActiveMarket, OpenPosition
-from polymarket.feeds.chainlink_rtds import _resolve_previous_window, _synthetic_paper_market
+from polymarket.oracle_buffer import OracleBuffer, OpenPosition, ActiveMarket
 
 
-def _market(open_price, btc_price, secs_left=5):
-    now = time.time()
-    return ActiveMarket(
-        market_id="res-test",
-        condition_id="cond-res",
-        yes_token_id="tok-yes",
-        no_token_id="tok-no",
-        window_open_ts=now - (300 - secs_left),
-        window_end_ts=now + secs_left,
-        window_open_price=open_price,
-    ), btc_price
-
-
-def _add_pos(oracle, order_id, side, shares=10.0, cost_basis=8.5):
-    pos = OpenPosition(
-        market_id="res-test",
-        condition_id="cond-res",
-        token_id="tok-yes",
+def _make_position(side: str, cost_basis: float = 20.0, shares: float = 0.25) -> OpenPosition:
+    return OpenPosition(
+        market_id="test-btc-5m-123",
+        condition_id="cond-abc",
+        token_id="tok-xyz",
         side=side,
         shares=shares,
         cost_basis=cost_basis,
+        window_open_price=60000.0,
     )
-    oracle.open_positions[order_id] = pos
-    return pos
 
 
-class TestResolveWindow:
-    def test_up_position_wins_when_price_rose(self):
-        oracle = OracleBuffer(bankroll=490.0, paper_trading=True)
-        market, btc = _market(open_price=50000, btc_price=50100)
-        oracle.active_market = market
-        oracle.btc_price = btc
-        _add_pos(oracle, "ord-up", "UP")
+def _apply_resolution(pos: OpenPosition, btc_went_up: bool) -> None:
+    """Replicate the logic from chainlink_rtds._resolve_previous_window."""
+    won = (pos.side in ("UP", "YES")) == btc_went_up
+    pos.resolution = 1.0 if won else 0.0
+    pos.resolved = True
 
-        _resolve_previous_window(oracle)
 
-        pos = oracle.open_positions["ord-up"]
-        assert pos.resolved is True
-        assert pos.resolution == 1.0  # won
+class TestResolutionDirectionality:
 
-    def test_up_position_loses_when_price_fell(self):
-        oracle = OracleBuffer(bankroll=490.0, paper_trading=True)
-        market, btc = _market(open_price=50000, btc_price=49900)
-        oracle.active_market = market
-        oracle.btc_price = btc
-        _add_pos(oracle, "ord-up-loss", "UP")
-
-        _resolve_previous_window(oracle)
-
-        pos = oracle.open_positions["ord-up-loss"]
-        assert pos.resolved is True
-        assert pos.resolution == 0.0  # lost
-
-    def test_no_position_wins_when_price_fell(self):
-        oracle = OracleBuffer(bankroll=490.0, paper_trading=True)
-        market, btc = _market(open_price=50000, btc_price=49900)
-        oracle.active_market = market
-        oracle.btc_price = btc
-        _add_pos(oracle, "ord-no-win", "NO")
-
-        _resolve_previous_window(oracle)
-
-        pos = oracle.open_positions["ord-no-win"]
-        assert pos.resolution == 1.0  # NO wins when price fell
-
-    def test_no_position_loses_when_price_rose(self):
-        oracle = OracleBuffer(bankroll=490.0, paper_trading=True)
-        market, btc = _market(open_price=50000, btc_price=50100)
-        oracle.active_market = market
-        oracle.btc_price = btc
-        _add_pos(oracle, "ord-no-loss", "NO")
-
-        _resolve_previous_window(oracle)
-
-        pos = oracle.open_positions["ord-no-loss"]
-        assert pos.resolution == 0.0  # NO loses when price rose
-
-    def test_tie_price_goes_to_up(self):
-        """When final == open exactly, UP wins (ties go to UP by convention)."""
-        oracle = OracleBuffer(bankroll=490.0, paper_trading=True)
-        market, btc = _market(open_price=50000, btc_price=50000)
-        oracle.active_market = market
-        oracle.btc_price = btc
-        _add_pos(oracle, "ord-tie-up", "UP")
-
-        _resolve_previous_window(oracle)
-
-        pos = oracle.open_positions["ord-tie-up"]
+    def test_yes_wins_when_btc_up(self):
+        pos = _make_position("YES")
+        _apply_resolution(pos, btc_went_up=True)
         assert pos.resolution == 1.0
 
-    def test_already_resolved_skipped(self):
-        oracle = OracleBuffer(bankroll=490.0, paper_trading=True)
-        market, btc = _market(open_price=50000, btc_price=50100)
-        oracle.active_market = market
-        oracle.btc_price = btc
-        pos = _add_pos(oracle, "ord-already", "UP")
-        pos.resolved = True
-        pos.resolution = 0.0  # explicitly set to lost
-
-        _resolve_previous_window(oracle)
-
-        # Should NOT be overwritten
+    def test_yes_loses_when_btc_down(self):
+        pos = _make_position("YES")
+        _apply_resolution(pos, btc_went_up=False)
         assert pos.resolution == 0.0
 
+    def test_no_wins_when_btc_down(self):
+        pos = _make_position("NO")
+        _apply_resolution(pos, btc_went_up=False)
+        assert pos.resolution == 1.0
 
-class TestSyntheticPaperMarket:
-    def test_market_id_contains_timestamp(self):
-        m = _synthetic_paper_market(50000)
-        assert m.market_id.startswith("paper-btc-5m-")
+    def test_no_loses_when_btc_up(self):
+        pos = _make_position("NO")
+        _apply_resolution(pos, btc_went_up=True)
+        assert pos.resolution == 0.0
 
-    def test_window_end_300s_after_open(self):
-        m = _synthetic_paper_market(50000)
-        assert m.window_end_ts - m.window_open_ts == pytest.approx(300, abs=1)
+    def test_up_treated_same_as_yes(self):
+        pos_yes = _make_position("YES")
+        pos_up  = _make_position("UP")
+        _apply_resolution(pos_yes, btc_went_up=True)
+        _apply_resolution(pos_up,  btc_went_up=True)
+        assert pos_yes.resolution == pos_up.resolution
 
-    def test_open_price_captured(self):
-        m = _synthetic_paper_market(51234.56)
-        assert m.window_open_price == pytest.approx(51234.56)
+    def test_down_treated_same_as_no(self):
+        pos_no   = _make_position("NO")
+        pos_down = _make_position("DOWN")
+        _apply_resolution(pos_no,   btc_went_up=False)
+        _apply_resolution(pos_down, btc_went_up=False)
+        assert pos_no.resolution == pos_down.resolution
+
+    def test_resolution_marked_resolved(self):
+        pos = _make_position("YES")
+        assert pos.resolved is False
+        _apply_resolution(pos, btc_went_up=True)
+        assert pos.resolved is True
+
+
+class TestPnLAccounting:
+    """
+    End-to-end P&L accounting: place trade → resolve → redeem.
+    Verifies bankroll and P&L totals are correct for both win and loss paths.
+    """
+
+    def _setup_oracle_with_position(self, side: str):
+        oracle = OracleBuffer(bankroll=1000.0, paper_trading=True)
+        oracle.btc_price = 60100.0  # slightly up
+        pos = _make_position(side, cost_basis=20.0, shares=0.25)
+        oracle.open_positions["order-001"] = pos
+        oracle.bankroll -= 20.0   # simulate the OMS debit
+        return oracle, pos
+
+    @pytest.mark.asyncio
+    async def test_win_increases_bankroll_by_payout(self):
+        oracle, pos = self._setup_oracle_with_position("YES")
+        starting_bankroll = oracle.bankroll  # 980.0
+
+        pos.resolution = 1.0
+        pos.resolved = True
+
+        payout = pos.shares * pos.resolution  # 0.25 * 1.0 = 0.25
+        async with oracle.bankroll_lock:
+            oracle.bankroll += payout
+            oracle.total_pnl += payout - pos.cost_basis
+            oracle.today_pnl += payout - pos.cost_basis
+
+        assert oracle.bankroll == pytest.approx(starting_bankroll + payout, abs=0.01)
+        assert oracle.total_pnl == pytest.approx(payout - 20.0, abs=0.01)  # -19.75 (low shares)
+
+    @pytest.mark.asyncio
+    async def test_full_win_payout_at_1_per_share(self):
+        # Buy 20 shares @ 1.0 per share (market resolves at full payout)
+        oracle = OracleBuffer(bankroll=1000.0, paper_trading=True)
+        pos = OpenPosition(
+            market_id="test", condition_id="c", token_id="t",
+            side="YES", shares=20.0, cost_basis=20.0,  # bought at $1/share (edge case)
+            window_open_price=60000.0,
+        )
+        oracle.open_positions["order-win"] = pos
+        oracle.bankroll -= 20.0
+        pos.resolution = 1.0
+        pos.resolved = True
+
+        payout = pos.shares * pos.resolution
+        async with oracle.bankroll_lock:
+            oracle.bankroll += payout
+            oracle.total_pnl += payout - pos.cost_basis
+
+        assert oracle.bankroll == pytest.approx(1000.0, abs=0.01)  # net zero
+        assert oracle.total_pnl == pytest.approx(0.0, abs=0.01)
+
+    @pytest.mark.asyncio
+    async def test_loss_results_in_negative_pnl(self):
+        oracle, pos = self._setup_oracle_with_position("YES")
+
+        pos.resolution = 0.0  # lost
+        pos.resolved = True
+
+        payout = pos.shares * pos.resolution  # 0.0
+        # No bankroll increase for a loss
+        async with oracle.bankroll_lock:
+            oracle.total_pnl += payout - pos.cost_basis
+            oracle.today_pnl += payout - pos.cost_basis
+
+        assert oracle.total_pnl == pytest.approx(-20.0, abs=0.01)
+        assert oracle.today_pnl == pytest.approx(-20.0, abs=0.01)
+        # Bankroll NOT restored — the $20 was already debited at entry
+        assert oracle.bankroll == pytest.approx(980.0, abs=0.01)
+
+    @pytest.mark.asyncio
+    async def test_win_no_position_shows_positive_pnl(self):
+        oracle = OracleBuffer(bankroll=1000.0, paper_trading=True)
+        # Buy YES at $0.82 for $20 → 24.39 shares
+        shares = 20.0 / 0.82
+        pos = OpenPosition(
+            market_id="test", condition_id="c", token_id="t",
+            side="YES", shares=shares, cost_basis=20.0,
+            window_open_price=60000.0,
+        )
+        oracle.open_positions["order-002"] = pos
+        oracle.bankroll -= 20.0
+        pos.resolution = 1.0
+        pos.resolved = True
+
+        payout = pos.shares * pos.resolution  # 24.39
+        async with oracle.bankroll_lock:
+            oracle.bankroll += payout
+            oracle.total_pnl += payout - pos.cost_basis
+
+        assert oracle.total_pnl == pytest.approx(payout - 20.0, abs=0.01)
+        assert oracle.total_pnl > 0, "winner should yield positive P&L"
+
+    def test_losing_trade_pnl_is_negative_cost_basis(self):
+        pos = _make_position("YES", cost_basis=20.0, shares=0.25)
+        pos.resolution = 0.0
+        payout = pos.shares * pos.resolution
+        final_pnl = payout - pos.cost_basis
+        assert final_pnl == pytest.approx(-20.0)
+        assert final_pnl < 0

@@ -34,38 +34,45 @@ async def arb_loop(
     risk_mgr: RiskManager,
 ) -> None:
     """Strategy C arbitrage scanner. Never exits."""
-    log.info("Strategy C (arbitrage) starting...")
+    log.info("Strategy C (arbitrage) starting — waiting for price feed...")
+    await oracle.price_ready.wait()
+    log.info("Strategy C: price feed ready, entering arb loop")
     while True:
         await asyncio.sleep(SCAN_INTERVAL)
+
+        if oracle.emergency_halt:
+            continue
 
         allowed, reason = risk_mgr.allow_trade(oracle.bankroll)
         if not allowed:
             continue
 
         try:
-            markets = _fetch_active_btc_markets()
+            # H14: run blocking Gamma fetch in thread pool
+            loop = asyncio.get_running_loop()
+            markets = await loop.run_in_executor(None, _fetch_active_btc_markets)
         except Exception as exc:
             log.warning(f"[C] Gamma fetch failed: {exc!r}")
             continue
 
-        # Type 1: Bundle arb on current active market
+        # Type 1: Bundle arb on current active market — C4: queue BOTH legs atomically
         if oracle.active_market:
             m = oracle.active_market
-            bundle_opps = _scan_bundle_arb(
+            bundle_orders = _scan_bundle_arb(
                 m.yes_ask, m.no_ask, m.market_id, m.condition_id,
                 m.yes_token_id, m.no_token_id,
             )
-            for opp in bundle_opps:
-                log.info(f"[C] Bundle arb: {opp}")
-                await order_queue.put({**opp, "strategy": "C",
-                                       "order_type": "FOK", "queued_at": time.time()})
+            for yes_order, no_order in bundle_orders:
+                log.info(f"[C] Bundle arb: yes={yes_order['price']:.3f} no={no_order['price']:.3f} profit={yes_order.get('net_profit', 0):.4f}")
+                await order_queue.put({**yes_order, "strategy": "C", "order_type": "FOK", "queued_at": time.time()})
+                await order_queue.put({**no_order, "strategy": "C", "order_type": "FOK", "queued_at": time.time()})
 
-        # Type 2: Monotonicity violations across BTC strike markets
+        # Type 2: Monotonicity violations across BTC strike markets — C4: queue BOTH legs atomically
         violations = _scan_monotonicity(markets)
-        for v in violations:
-            log.info(f"[C] Monotonicity violation: {v}")
-            await order_queue.put({**v, "strategy": "C",
-                                    "order_type": "FOK", "queued_at": time.time()})
+        for yes_order, no_order in violations:
+            log.info(f"[C] Monotonicity violation: yes={yes_order['price']:.3f} no={no_order['price']:.3f} spread={yes_order.get('spread', 0):.4f}")
+            await order_queue.put({**yes_order, "strategy": "C", "order_type": "FOK", "queued_at": time.time()})
+            await order_queue.put({**no_order, "strategy": "C", "order_type": "FOK", "queued_at": time.time()})
 
 
 def _scan_bundle_arb(
@@ -75,8 +82,10 @@ def _scan_bundle_arb(
     condition_id: str,
     yes_token_id: str,
     no_token_id: str,
-) -> list[dict]:
-    """YES + NO combined should cost ≥ $1.00. If less, guaranteed profit."""
+) -> list[tuple[dict, dict]]:
+    """YES + NO combined should cost ≥ $1.00. If less, guaranteed profit.
+    C4: Returns list of (yes_order, no_order) pairs for atomic submission.
+    """
     yes_fee = dynamic_taker_fee(yes_ask)
     no_fee = dynamic_taker_fee(no_ask)
     gross = 1.0 - yes_ask - no_ask
@@ -85,26 +94,41 @@ def _scan_bundle_arb(
     if net < MIN_BUNDLE_PROFIT:
         return []
 
-    return [{
+    arb_pair_id = f"arb-{market_id}-{int(time.time())}"
+    yes_order = {
         "action": "bundle_arb",
         "market_id": market_id,
         "condition_id": condition_id,
-        "token_id": yes_token_id,   # OMS tracks YES leg; NO leg is symmetric
+        "token_id": yes_token_id,
         "side": "YES",
         "price": yes_ask,
-        "dollar_size": 10.0,        # per leg
-        "yes_token_id": yes_token_id,
-        "no_token_id": no_token_id,
+        "dollar_size": 10.0,
         "yes_ask": yes_ask,
         "no_ask": no_ask,
         "net_profit": net,
-    }]
+        "arb_pair_id": arb_pair_id,
+    }
+    no_order = {
+        "action": "bundle_arb",
+        "market_id": market_id,
+        "condition_id": condition_id,
+        "token_id": no_token_id,
+        "side": "NO",
+        "price": no_ask,
+        "dollar_size": 10.0,
+        "yes_ask": yes_ask,
+        "no_ask": no_ask,
+        "net_profit": net,
+        "arb_pair_id": arb_pair_id,
+    }
+    return [(yes_order, no_order)]
 
 
-def _scan_monotonicity(markets: list[dict]) -> list[dict]:
+def _scan_monotonicity(markets: list[dict]) -> list[tuple[dict, dict]]:
     """
     P(BTC > higher_strike) must be ≤ P(BTC > lower_strike).
     Any violation: buy YES at lower strike, buy NO at higher strike.
+    C4: Returns list of (yes_order, no_order) pairs for atomic submission.
     """
     btc_markets = [
         m for m in markets
@@ -120,24 +144,31 @@ def _scan_monotonicity(markets: list[dict]) -> list[dict]:
         hi = btc_markets[i + 1]
         spread = hi["yes_price"] - lo["yes_price"]
         if spread < -MIN_MONOTONICITY_SPREAD:  # hi strike has HIGHER yes_price — violation
-            violations.append({
+            buy_no_price = 1.0 - hi["yes_price"]
+            arb_pair_id = f"arb-{lo['market_id']}-{int(time.time())}"
+            yes_order = {
                 "action": "monotonicity_arb",
-                # OMS required fields (YES leg at lower strike is primary)
                 "market_id": lo["market_id"],
                 "condition_id": lo.get("condition_id", ""),
                 "token_id": lo["yes_token_id"],
                 "side": "YES",
                 "price": lo["yes_price"],
                 "dollar_size": 10.0,
-                # Both legs for reference / live execution
-                "buy_yes_market": lo["market_id"],
-                "buy_yes_token": lo["yes_token_id"],
-                "buy_yes_price": lo["yes_price"],
-                "buy_no_market": hi["market_id"],
-                "buy_no_token": hi["no_token_id"],
-                "buy_no_price": 1.0 - hi["yes_price"],
                 "spread": spread,
-            })
+                "arb_pair_id": arb_pair_id,
+            }
+            no_order = {
+                "action": "monotonicity_arb",
+                "market_id": hi["market_id"],
+                "condition_id": hi.get("condition_id", ""),
+                "token_id": hi["no_token_id"],
+                "side": "NO",
+                "price": buy_no_price,
+                "dollar_size": 10.0,
+                "spread": spread,
+                "arb_pair_id": arb_pair_id,
+            }
+            violations.append((yes_order, no_order))
     return violations
 
 

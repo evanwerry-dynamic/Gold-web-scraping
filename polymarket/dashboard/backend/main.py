@@ -18,7 +18,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from polymarket.dashboard.backend.bridge import set_connection_manager
+from polymarket.dashboard.backend.bridge import set_connection_manager, get_oracle
 
 log = logging.getLogger(__name__)
 
@@ -180,6 +180,28 @@ async def root():
 @app.get("/health")
 async def health():
     return JSONResponse({"status": "ok", "clients": len(manager._active)})
+
+
+@app.post("/halt")
+async def halt():
+    """Activate the emergency kill-switch — blocks all new orders immediately."""
+    oracle = get_oracle()
+    if oracle is None:
+        return JSONResponse({"status": "error", "detail": "Bot not running"}, status_code=503)
+    oracle.emergency_halt = True
+    log.warning("EMERGENCY HALT activated via dashboard")
+    return JSONResponse({"status": "halted"})
+
+
+@app.post("/resume")
+async def resume():
+    """Clear the emergency kill-switch — allows new orders to flow again."""
+    oracle = get_oracle()
+    if oracle is None:
+        return JSONResponse({"status": "error", "detail": "Bot not running"}, status_code=503)
+    oracle.emergency_halt = False
+    log.info("Trading resumed via dashboard")
+    return JSONResponse({"status": "resumed"})
 
 
 @app.websocket("/ws")

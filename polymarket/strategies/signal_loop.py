@@ -40,8 +40,19 @@ async def signal_loop(
     while True:
         await asyncio.sleep(SCAN_INTERVAL)
 
+        # Emergency halt — block all new orders immediately
+        if oracle.emergency_halt:
+            oracle.strategy_phase = "SCAN"
+            continue
+
         market = oracle.active_market
         if market is None:
+            oracle.strategy_phase = "SCAN"
+            continue
+
+        # Wait until the vol estimator has enough samples to avoid noise trades
+        if not oracle.vol_estimator.is_ready():
+            log.debug("[A] Vol estimator not ready (<5 samples) — waiting")
             oracle.strategy_phase = "SCAN"
             continue
 

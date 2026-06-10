@@ -1,4 +1,5 @@
 """Shared in-memory state written by WebSocket feeds, read by strategy loops."""
+import asyncio
 import time
 from dataclasses import dataclass, field
 from collections import deque
@@ -13,15 +14,20 @@ class BinanceVolEstimator:
         self._last_price: float | None = None
 
     def update(self, price: float) -> None:
-        if self._last_price and self._last_price > 0:
+        if price > 0 and self._last_price and self._last_price > 0:
             self._returns.append(np.log(price / self._last_price))
-        self._last_price = price
+        if price > 0:
+            self._last_price = price
 
     def sigma_per_second(self) -> float:
         """Return per-second realized vol. Falls back to 0.0002 if insufficient data."""
         if len(self._returns) < 5:
             return 0.0002
         return float(np.std(self._returns))
+
+    def is_ready(self) -> bool:
+        """True once we have at least 5 samples for a meaningful vol estimate."""
+        return len(self._returns) >= 5
 
 
 @dataclass
@@ -80,6 +86,16 @@ class OracleBuffer:
 
     # Paper trading flag
     paper_trading: bool = True
+
+    # Emergency kill-switch — all new orders blocked when True
+    emergency_halt: bool = False
+
+    # Async primitives — one per instance, created on first event-loop access
+    bankroll_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    price_ready: asyncio.Event = field(default_factory=asyncio.Event)
+
+    # Peak bankroll tracker (for drawdown display)
+    peak_bankroll: float = 0.0
 
     # Dashboard event queue — OMS pushes trade dicts here, bridge drains them
     pending_trade_events: deque = field(default_factory=deque)

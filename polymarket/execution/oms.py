@@ -13,6 +13,7 @@ import asyncio
 import logging
 import os
 import time
+from collections import deque
 from enum import Enum
 
 from polymarket.data import append_trade
@@ -26,6 +27,10 @@ ORDER_CONCURRENCY = 3
 FILL_POLL_INTERVAL = 1.0   # seconds between fill status checks
 FOK_TIMEOUT = 5.0          # seconds before FOK is considered failed
 GTC_TIMEOUT = 30.0         # seconds before GTC is cancelled
+
+# Dedup: track recently-filled (market_id, strategy, side) combos to prevent
+# double-fills from queue races. Bounded to prevent memory leak.
+_filled_order_ids: deque = deque(maxlen=2000)
 
 
 class OrderState(str, Enum):
@@ -63,6 +68,23 @@ async def _process_order(
     oracle: OracleBuffer,
     risk_mgr: RiskManager,
 ) -> None:
+    # Emergency halt — drop order immediately, log once
+    if oracle.emergency_halt:
+        log.warning(
+            f"[OMS] Order dropped — emergency halt active "
+            f"({intent.get('strategy')} {intent.get('side')})"
+        )
+        return
+
+    # Dedup: prevent double-fills from queue races on the same market/strategy/side
+    dedup_key = (
+        f"{intent.get('market_id')}-{intent.get('strategy')}-{intent.get('side', '')}"
+    )
+    if dedup_key in _filled_order_ids:
+        log.debug(f"[OMS] Duplicate order suppressed: {dedup_key}")
+        return
+    _filled_order_ids.append(dedup_key)
+
     async with sem:
         # Only momentum (Strategy A) drives the strategy phase display.
         # Strategy B/C orders are background — don't let them stomp the phase.
@@ -122,6 +144,7 @@ async def _paper_fill(
     )
     oracle.open_positions[order_id] = pos
     oracle.bankroll -= dollar_size
+    oracle.peak_bankroll = max(oracle.peak_bankroll, oracle.bankroll)
 
     trade_record = {
         "order_id": order_id,

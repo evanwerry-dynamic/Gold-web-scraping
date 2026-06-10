@@ -24,25 +24,29 @@ async def redeem_loop(oracle: OracleBuffer) -> None:
     while True:
         await asyncio.sleep(REDEEM_INTERVAL)
 
-        to_redeem = [
-            (oid, pos)
-            for oid, pos in oracle.open_positions.items()
-            if pos.resolved and not pos.redeemed
-        ]
+        # Snapshot under lock to avoid concurrent modification while iterating
+        async with oracle.bankroll_lock:
+            to_redeem = [
+                (oid, pos)
+                for oid, pos in oracle.open_positions.items()
+                if pos.resolved and not pos.redeemed
+            ]
 
         for order_id, pos in to_redeem:
             try:
                 payout = pos.shares * pos.resolution  # resolution=1.0 → won
                 if payout > 0:
                     await _redeem_position(pos.condition_id, pos.token_id, pos.shares)
-                    oracle.bankroll += payout
 
                 pos.redeemed = True
                 final_pnl = payout - pos.cost_basis
 
-                # Update running P&L totals so the dashboard header is correct
-                oracle.total_pnl += final_pnl
-                oracle.today_pnl += final_pnl
+                # Update bankroll + P&L atomically under lock
+                async with oracle.bankroll_lock:
+                    oracle.bankroll += payout
+                    oracle.peak_bankroll = max(oracle.peak_bankroll, oracle.bankroll)
+                    oracle.total_pnl += final_pnl
+                    oracle.today_pnl += final_pnl
 
                 entry_price = pos.cost_basis / pos.shares if pos.shares > 0 else 0.0
                 redeem_record = {

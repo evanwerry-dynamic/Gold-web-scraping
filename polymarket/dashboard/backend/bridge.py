@@ -22,10 +22,22 @@ BROADCAST_INTERVAL = 1.0  # Push state every second
 # Shared ConnectionManager — set by dashboard main.py on startup
 _connection_manager = None
 
+# Shared OracleBuffer reference — set once the bot starts
+_oracle = None
+
 
 def set_connection_manager(mgr) -> None:
     global _connection_manager
     _connection_manager = mgr
+
+
+def set_oracle(oracle) -> None:
+    global _oracle
+    _oracle = oracle
+
+
+def get_oracle():
+    return _oracle
 
 
 async def broadcast_loop(oracle: OracleBuffer) -> None:
@@ -47,7 +59,8 @@ async def broadcast_loop(oracle: OracleBuffer) -> None:
 
 
 async def _broadcast_pnl(oracle: OracleBuffer) -> None:
-    peak = max(oracle.bankroll + oracle.total_pnl, oracle.bankroll)
+    # peak_bankroll tracks the highest bankroll ever seen — updated in oms.py on fill
+    peak = oracle.peak_bankroll if oracle.peak_bankroll > 0 else oracle.bankroll
     drawdown = (peak - oracle.bankroll) / peak if peak > 0 else 0.0
     msg = {
         "type": "pnl",
@@ -71,6 +84,7 @@ async def _broadcast_health(oracle: OracleBuffer) -> None:
         "ws_clob": (now - oracle.last_clob_ts) < 60,
         "open_positions": len(oracle.open_positions),
         "strategy_phase": oracle.strategy_phase,
+        "halted": oracle.emergency_halt,
     }
     # Only include btc_price when the bot has a real price — avoids overwriting
     # the standalone Kraken feed's price with 0 at startup

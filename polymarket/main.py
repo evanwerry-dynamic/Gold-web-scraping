@@ -109,6 +109,17 @@ async def run() -> None:
     else:
         log.info("PostgreSQL persistence active — state survives redeploys")
 
+    # Expose oracle to the dashboard halt/resume endpoints
+    try:
+        from polymarket.dashboard.backend.bridge import set_oracle
+        set_oracle(oracle)
+    except Exception:
+        pass
+
+    # Initialise peak_bankroll so the drawdown display is correct from the start
+    if oracle.peak_bankroll <= 0:
+        oracle.peak_bankroll = oracle.bankroll
+
     mode = "PAPER TRADING" if paper else "LIVE TRADING"
     log.info(f"Mad Scientist starting in {mode} mode")
     log.info(f"   Bankroll: ${oracle.bankroll:.2f} pUSD")

@@ -36,6 +36,12 @@ def get_oracle():
     return _oracle
 
 
+def set_oracle(oracle) -> None:
+    """Register the live OracleBuffer so /halt and /resume endpoints can reach it."""
+    global _oracle
+    _oracle = oracle
+
+
 async def broadcast_loop(oracle: OracleBuffer) -> None:
     """Broadcast oracle state to all connected dashboard clients every second."""
     global _oracle

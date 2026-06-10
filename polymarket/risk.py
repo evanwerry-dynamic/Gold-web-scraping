@@ -115,14 +115,16 @@ def kelly_size(
     market_price: float,
     bankroll: float,
     fraction: float = 0.25,
-    max_pct: float = 0.03,
+    max_pct: float = 0.015,
     scale_factor: float = 1.0,
 ) -> dict:
     """
     Quarter-Kelly position sizing with hard cap.
 
     fraction=0.25 delivers ~50% of full-Kelly growth rate with ~75% less variance.
-    max_pct=0.03 hard-caps each trade at 3% of bankroll.
+    max_pct=0.015 hard-caps each trade at 1.5% of bankroll (~$25 at $1700 bankroll).
+    At $0.85 entry a full loss is the entire position cost, so smaller cap reduces
+    the win/loss asymmetry from ~6:1 to ~6:1 at half the magnitude.
 
     Returns dict with dollar_size, shares, kelly_pct, edge.
     Returns zero-sized dict when no edge exists.

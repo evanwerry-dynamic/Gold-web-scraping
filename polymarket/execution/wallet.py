@@ -11,10 +11,22 @@ log = logging.getLogger(__name__)
 
 # Polygon Mainnet contract addresses (CLOB V2, live April 28 2026)
 # All addresses are overridable via environment variables.
+# Verified 2026-06-11 against Polygonscan labels and the official
+# Polymarket/ctf-exchange-v2 deployment table.
 CTF_EXCHANGE_V2   = os.getenv("CTF_EXCHANGE_V2", "0xE111180000d2663C0091e4f400237545B87B996B")
 NEG_RISK_V2       = os.getenv("NEG_RISK_V2", "0xe2222d279d744050d28e00520010520000310F59")
 PUSD_ADDRESS      = os.getenv("PUSD_ADDRESS", "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB")
 COLLATERAL_ONRAMP = os.getenv("COLLATERAL_ONRAMP", "0x93070a847efEf7F70739046A929D47a521F5B8ee")
+
+# Redemption targets. redeemPositions does NOT exist on the exchange contracts —
+# V2 redemption goes through the collateral adapters, which burn the ERC-1155
+# outcome tokens via the ConditionalTokens framework and pay out pUSD directly.
+CTF_COLLATERAL_ADAPTER      = os.getenv("CTF_COLLATERAL_ADAPTER", "0xADa100874d00e3331D00F2007a9c336a65009718")
+NEG_RISK_COLLATERAL_ADAPTER = os.getenv("NEG_RISK_COLLATERAL_ADAPTER", "0xAdA200001000ef00D07553cEE7006808F895c6F1")
+CONDITIONAL_TOKENS          = os.getenv("CONDITIONAL_TOKENS", "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045")
+# Legacy collateral (bridged USDC.e) — passed as the collateralToken arg for
+# ABI compatibility; the V2 adapter ignores it and returns pUSD regardless.
+USDCE_ADDRESS               = os.getenv("USDCE_ADDRESS", "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174")
 
 _client = None  # Singleton CLOB client
 
@@ -60,9 +72,13 @@ _CTF_ABI = [
 ]
 
 
-def get_ctf_exchange(w3):
-    """Return the CTF Exchange V2 contract instance."""
-    addr = os.getenv("CTF_EXCHANGE_V2", "0xE111180000d2663C0091e4f400237545B87B996B")
+def get_redeem_adapter(w3, neg_risk: bool = False):
+    """Return the V2 collateral adapter used for redeemPositions.
+
+    The CTF Exchange contracts have no redeemPositions function — calling it
+    there reverts. The adapters expose the legacy CTF signature and pay pUSD.
+    """
+    addr = NEG_RISK_COLLATERAL_ADAPTER if neg_risk else CTF_COLLATERAL_ADAPTER
     return w3.eth.contract(address=w3.to_checksum_address(addr), abi=_CTF_ABI)
 
 

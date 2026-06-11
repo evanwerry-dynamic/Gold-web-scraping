@@ -109,13 +109,22 @@ async def _redeem_position(
     side: str = "YES",
     paper: bool = True,
 ) -> None:
-    """Call CTF Exchange V2 redeemPositions on Polygon."""
+    """Redeem resolved outcome tokens for pUSD via the V2 CtfCollateralAdapter.
+
+    redeemPositions does NOT exist on the CTF Exchange — it must be called on
+    the collateral adapter, which burns the ERC-1155 outcome tokens through the
+    ConditionalTokens framework and pays out pUSD directly. The collateralToken
+    argument (USDC.e) is kept for ABI compatibility; the adapter ignores it.
+
+    One-time setup prerequisite: ConditionalTokens.setApprovalForAll(adapter)
+    must be granted, or the redemption tx reverts.
+    """
     if paper:
         log.info(f"[paper] Simulating redemption: {condition_id} {shares:.2f}sh")
         return
 
     from web3 import Web3
-    from polymarket.execution.wallet import PUSD_ADDRESS, CTF_EXCHANGE_V2
+    from polymarket.execution.wallet import CTF_COLLATERAL_ADAPTER, USDCE_ADDRESS
 
     pk = os.getenv("POLYGON_PRIVATE_KEY", "")
     if not pk:
@@ -139,7 +148,7 @@ async def _redeem_position(
     }]
 
     contract = w3.eth.contract(
-        address=Web3.to_checksum_address(CTF_EXCHANGE_V2), abi=ctf_abi
+        address=Web3.to_checksum_address(CTF_COLLATERAL_ADAPTER), abi=ctf_abi
     )
 
     # Binary markets: YES/UP = index 1, NO/DOWN = index 2
@@ -152,7 +161,7 @@ async def _redeem_position(
     )
 
     tx = contract.functions.redeemPositions(
-        Web3.to_checksum_address(PUSD_ADDRESS),
+        Web3.to_checksum_address(USDCE_ADDRESS),
         b"\x00" * 32,
         cid_bytes,
         [index_set],

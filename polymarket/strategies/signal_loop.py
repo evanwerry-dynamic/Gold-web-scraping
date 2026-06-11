@@ -28,6 +28,9 @@ log = logging.getLogger(__name__)
 _ENTRY_WINDOW_SECONDS_DEFAULT = float(os.getenv("ENTRY_SECONDS_BEFORE_CLOSE", "12"))  # +2s for CLOB submission latency
 _MIN_DELTA_DEFAULT = float(os.getenv("MIN_DELTA_THRESHOLD", "0.001"))
 _MIN_EDGE_NET_DEFAULT = float(os.getenv("MIN_EDGE_NET", "0.07"))  # 7¢: covers 2-tick slip + fee drift
+# Pipeline-test mode: floor at $0 so a small bankroll can fire one real order.
+# Set MIN_ORDER_SIZE_USD=5 (or higher) before scaling capital.
+MIN_ORDER_SIZE_USD = float(os.getenv("MIN_ORDER_SIZE_USD", "0"))
 SCAN_INTERVAL = 2.0  # seconds between signal evaluations
 
 
@@ -135,8 +138,12 @@ async def signal_loop(
             bankroll=oracle.bankroll,
             scale_factor=risk_mgr.position_scale_factor(),
         )
-        if sizing["dollar_size"] < 5.0:
-            log.info(f"[A] Size ${sizing['dollar_size']:.2f} below $5 minimum — skip")
+        # <= so zero-sized (no-edge) orders are always skipped even at floor 0
+        if sizing["dollar_size"] <= MIN_ORDER_SIZE_USD:
+            log.info(
+                f"[A] Size ${sizing['dollar_size']:.2f} at or below "
+                f"${MIN_ORDER_SIZE_USD:.2f} minimum — skip"
+            )
             continue
 
         token_id = market.yes_token_id if direction == "UP" else market.no_token_id

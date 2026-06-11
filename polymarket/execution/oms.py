@@ -225,6 +225,7 @@ async def _paper_fill(
         shares=actual_shares,
         cost_basis=dollar_size,
         window_open_price=intent.get("window_open_price", 0.0),
+        strategy=intent.get("strategy", "A"),
     )
     async with oracle.bankroll_lock:
         # Sufficiency backstop: never let total committed cost exceed available
@@ -368,6 +369,7 @@ async def _track_until_terminal(
                     side=intent.get("side", "YES"),
                     shares=shares,
                     cost_basis=dollar_size,
+                    strategy=intent.get("strategy", "A"),
                 )
                 async with oracle.bankroll_lock:
                     oracle.open_positions[tracked_id] = pos
@@ -437,6 +439,7 @@ async def _track_until_terminal(
                     side=intent.get("side", "YES"),
                     shares=shares,
                     cost_basis=dollar_size,
+                    strategy=intent.get("strategy", "A"),
                 )
                 async with oracle.bankroll_lock:
                     oracle.open_positions[tracked_id] = pos

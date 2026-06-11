@@ -52,7 +52,8 @@ export function TradeHistoryPage() {
   const serverPnl = usePnlStore((s) => s.pnl);
 
   // ── Metrics ──────────────────────────────────────────────────────────────────
-  const closed = trades.filter((t) => t.pnl !== null);
+  // "closed" = genuinely settled trades only (exclude FOK rejections: pnl=0 + action="rejected")
+  const closed = trades.filter((t) => t.pnl !== null && t.action !== "rejected");
   const wins   = closed.filter((t) => (t.pnl ?? 0) > 0);
   const winRate   = closed.length > 0 ? wins.length / closed.length : null;
   const avgEdge   = trades.length > 0 ? trades.reduce((s, t) => s + (t.edge ?? 0), 0) / trades.length : 0;
@@ -257,6 +258,7 @@ export function TradeHistoryPage() {
         ) : (
           displayTrades.map((t: Trade) => {
             const pnlColor = t.pnl === null ? "#444"
+              : t.action === "rejected" ? "#555"
               : t.pnl > 0 ? "#00ff88" : "#ff4444";
             const sideColor = ["UP", "YES"].includes(t.side) ? "#00ff88" : "#ff9900";
 
@@ -295,7 +297,11 @@ export function TradeHistoryPage() {
                 <span style={{ color: "#4ec994" }}>{((t.edge ?? 0) * 100).toFixed(1)}%</span>
                 <span style={{ color: "#aaa" }}>${(t.dollar_size ?? 0).toFixed(2)}</span>
                 <span style={{ textAlign: "right", color: pnlColor, fontWeight: 700 }}>
-                  {t.pnl === null ? <span style={{ color: "#555", fontWeight: 400 }}>OPEN</span> : `$${t.pnl.toFixed(2)}`}
+                  {t.pnl === null
+                    ? <span style={{ color: "#555", fontWeight: 400 }}>OPEN</span>
+                    : t.action === "rejected"
+                    ? <span style={{ color: "#555", fontWeight: 400 }}>SKIP</span>
+                    : `$${t.pnl.toFixed(2)}`}
                 </span>
               </div>
             );

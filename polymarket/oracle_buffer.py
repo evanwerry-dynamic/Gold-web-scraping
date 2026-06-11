@@ -67,6 +67,7 @@ class OpenPosition:
     redeemed: bool = False
     window_open_price: float = 0.0   # BTC price when this window opened (for self-resolution)
     settlement_price: float = 0.0    # BTC price at window close (set by resolver)
+    strategy: str = "A"              # Strategy that opened this position (A/B/C)
 
 
 @dataclass

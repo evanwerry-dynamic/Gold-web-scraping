@@ -67,7 +67,7 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
                 redeem_record = {
                     "order_id": order_id,
                     "action": "redeem",
-                    "strategy": "A",
+                    "strategy": pos.strategy,
                     "market_id": pos.market_id,
                     "side": pos.side,
                     "entry_price": entry_price,
@@ -82,7 +82,7 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
                 oracle.pending_trade_events.append({
                     "id": order_id,
                     "market_id": pos.market_id,
-                    "strategy": "A",
+                    "strategy": pos.strategy,
                     "side": pos.side,
                     "entry_price": entry_price,
                     "fair_value": 0.0,

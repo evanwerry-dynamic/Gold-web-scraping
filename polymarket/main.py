@@ -71,6 +71,21 @@ async def run() -> None:
         log.warning(f"Bankroll is {oracle.bankroll} after restore — resetting to ${initial_bankroll}")
         oracle.bankroll = initial_bankroll
 
+    # Restore tuned strategy params (calibrator or dashboard Tuning tab) so
+    # they survive redeploys. Out-of-range values are dropped, not clamped.
+    try:
+        from polymarket.data import load_state
+        from polymarket.calibrator import LIVE_PARAMS, TUNABLE_RANGES
+        saved_params = load_state().get("strategy_params", {})
+        for k, v in saved_params.items():
+            lo, hi = TUNABLE_RANGES.get(k, (None, None))
+            if lo is not None and lo <= float(v) <= hi:
+                LIVE_PARAMS[k] = float(v)
+        if saved_params:
+            log.info(f"Strategy params restored: {LIVE_PARAMS}")
+    except Exception as exc:
+        log.warning(f"Strategy param restore failed: {exc!r}")
+
     # Bootstrap P&L totals from trade history so the dashboard header is
     # correct after a redeploy (total_pnl is never persisted when it's 0).
     if oracle.total_pnl == 0:

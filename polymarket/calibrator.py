@@ -21,18 +21,30 @@ log = logging.getLogger(__name__)
 CALIBRATION_INTERVAL = 86400.0  # 24 hours
 MIN_TRADES_FOR_CALIBRATION = 20
 
-# H3: module-level live params that signal_loop imports and reads each iteration
+# H3: module-level live params that signal_loop imports and reads each iteration.
+# Seeded from env vars so Railway config is the single source of startup truth —
+# previously the hardcoded 0.05 here silently overrode the MIN_EDGE_NET env default.
+# Mutated at runtime by the nightly calibrator and the dashboard Tuning tab.
 LIVE_PARAMS: dict = {
-    "min_delta_threshold": 0.001,
-    "min_edge_net": 0.05,
-    "entry_seconds_before_close": 10.0,
+    "min_delta_threshold": float(os.getenv("MIN_DELTA_THRESHOLD", "0.001")),
+    "min_edge_net": float(os.getenv("MIN_EDGE_NET", "0.07")),
+    "entry_seconds_before_close": float(os.getenv("ENTRY_SECONDS_BEFORE_CLOSE", "12")),
+    "min_order_size_usd": float(os.getenv("MIN_ORDER_SIZE_USD", "0")),
+    "kelly_max_pct": float(os.getenv("KELLY_MAX_PCT", "0.05")),
 }
 
-# H5: valid ranges for calibrator parameters
+# H5: valid ranges for calibrator parameters (Claude may only adjust these three)
 PARAM_RANGES = {
     "min_delta_threshold": (0.0005, 0.005),
     "min_edge_net": (0.02, 0.15),
     "entry_seconds_before_close": (5.0, 30.0),
+}
+
+# Full tunable set for the dashboard Tuning tab (superset of PARAM_RANGES)
+TUNABLE_RANGES = {
+    **PARAM_RANGES,
+    "min_order_size_usd": (0.0, 100.0),
+    "kelly_max_pct": (0.001, 0.10),
 }
 
 
@@ -154,7 +166,8 @@ Example: {{"min_delta_threshold": 0.0012, "min_edge_net": 0.06, "entry_seconds_b
             # H3: update LIVE_PARAMS so signal_loop picks them up on next iteration
             LIVE_PARAMS.update(new_params)
             state = await loop.run_in_executor(None, load_state)
-            state["strategy_params"] = new_params
+            # Merge so dashboard-tuned sizing params aren't dropped from persistence
+            state["strategy_params"] = {**state.get("strategy_params", {}), **new_params}
             await loop.run_in_executor(None, save_state, state)
             log.info(f"Claude recalibration applied: {new_params}")
         else:

@@ -158,6 +158,60 @@ async def resume():
     return JSONResponse({"halted": False})
 
 
+@app.get("/params")
+async def get_params():
+    """Current live strategy parameters + valid ranges for the Tuning tab."""
+    from polymarket.calibrator import LIVE_PARAMS, TUNABLE_RANGES
+    return JSONResponse({
+        "params": LIVE_PARAMS,
+        "ranges": {k: list(v) for k, v in TUNABLE_RANGES.items()},
+    })
+
+
+@app.post("/params")
+async def set_params(body: dict):
+    """Update live strategy parameters from the Tuning tab.
+
+    Values take effect on signal_loop's next 2s iteration — no restart.
+    Unknown keys and out-of-range values are rejected wholesale so a typo
+    can't half-apply a tuning change.
+    """
+    from polymarket.calibrator import LIVE_PARAMS, TUNABLE_RANGES
+
+    updates: dict[str, float] = {}
+    for k, v in body.items():
+        if k not in TUNABLE_RANGES:
+            return JSONResponse({"error": f"unknown parameter: {k}"}, status_code=400)
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            return JSONResponse({"error": f"{k} is not a number"}, status_code=400)
+        lo, hi = TUNABLE_RANGES[k]
+        if not (lo <= v <= hi):
+            return JSONResponse(
+                {"error": f"{k}={v} outside [{lo}, {hi}]"}, status_code=400
+            )
+        updates[k] = v
+
+    if not updates:
+        return JSONResponse({"error": "no parameters provided"}, status_code=400)
+
+    LIVE_PARAMS.update(updates)
+    log.warning(f"Strategy params updated via dashboard: {updates}")
+
+    # Persist so the tuning survives a redeploy (merge — don't drop other keys)
+    try:
+        from polymarket.data import load_state, save_state
+        loop = asyncio.get_running_loop()
+        state = await loop.run_in_executor(None, load_state)
+        state["strategy_params"] = {**state.get("strategy_params", {}), **updates}
+        await loop.run_in_executor(None, save_state, state)
+    except Exception as exc:
+        log.warning(f"Param persistence failed (applied in-memory only): {exc!r}")
+
+    return JSONResponse({"params": LIVE_PARAMS})
+
+
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await manager.connect(ws)

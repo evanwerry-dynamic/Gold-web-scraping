@@ -56,10 +56,12 @@ async def signal_loop(
             oracle.strategy_phase = "HALT"
             continue
 
-        # H3: read live calibrated parameters each iteration
+        # H3: read live parameters each iteration (calibrator + dashboard Tuning tab)
         MIN_DELTA = LIVE_PARAMS.get("min_delta_threshold", _MIN_DELTA_DEFAULT)
         MIN_EDGE_NET = LIVE_PARAMS.get("min_edge_net", _MIN_EDGE_NET_DEFAULT)
         ENTRY_WINDOW_SECONDS = LIVE_PARAMS.get("entry_seconds_before_close", _ENTRY_WINDOW_SECONDS_DEFAULT)
+        min_order_size = LIVE_PARAMS.get("min_order_size_usd", MIN_ORDER_SIZE_USD)
+        kelly_cap = LIVE_PARAMS.get("kelly_max_pct", KELLY_MAX_PCT)
 
         market = oracle.active_market
         if market is None:
@@ -140,14 +142,14 @@ async def signal_loop(
             fair_prob=fair_direction,
             market_price=ask,
             bankroll=oracle.bankroll,
-            max_pct=KELLY_MAX_PCT,
+            max_pct=kelly_cap,
             scale_factor=risk_mgr.position_scale_factor(),
         )
         # <= so zero-sized (no-edge) orders are always skipped even at floor 0
-        if sizing["dollar_size"] <= MIN_ORDER_SIZE_USD:
+        if sizing["dollar_size"] <= min_order_size:
             log.info(
                 f"[A] Size ${sizing['dollar_size']:.2f} at or below "
-                f"${MIN_ORDER_SIZE_USD:.2f} minimum — skip"
+                f"${min_order_size:.2f} minimum — skip"
             )
             continue
 

@@ -112,12 +112,12 @@ export function TuningPage() {
     <div style={{ flex: 1, overflowY: "auto", background: "#0a0a0a", padding: 16 }}>
       <div style={{ maxWidth: 860, margin: "0 auto", display: "flex", flexDirection: "column", gap: 12 }}>
 
-        <div style={{ color: "#666", fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase" }}>
+        <div style={{ color: "#aaa", fontSize: 13, letterSpacing: "0.1em", textTransform: "uppercase" }}>
           Live Strategy Tuning — changes apply on the next 2s signal cycle, no restart
         </div>
 
         {params === null ? (
-          <div style={{ padding: 40, textAlign: "center", color: "#333", fontSize: 12 }}>
+          <div style={{ padding: 40, textAlign: "center", color: "#888", fontSize: 14 }}>
             Loading current parameters…
           </div>
         ) : (
@@ -129,17 +129,17 @@ export function TuningPage() {
             const outOfRange = pending && (parseFloat(edited) < lo || parseFloat(edited) > hi);
             return (
               <div key={l.key} style={{
-                background: "#111", border: "1px solid #222", padding: "12px 14px",
-                display: "grid", gridTemplateColumns: "200px 110px 130px 1fr", gap: 12, alignItems: "center",
+                background: "#151515", border: "1px solid #2a2a2a", padding: "14px 16px",
+                display: "grid", gridTemplateColumns: "200px 120px 150px 1fr", gap: 14, alignItems: "center",
               }}>
                 <div>
-                  <div style={{ color: "#00ff88", fontSize: 13, fontWeight: 700 }}>{l.label}</div>
-                  <div style={{ color: "#555", fontSize: 9, marginTop: 2 }}>{l.unit}</div>
+                  <div style={{ color: "#00ff88", fontSize: 15, fontWeight: 700 }}>{l.label}</div>
+                  <div style={{ color: "#888", fontSize: 11, marginTop: 3 }}>{l.unit}</div>
                 </div>
                 <div>
-                  <div style={{ color: "#888", fontSize: 9, textTransform: "uppercase", letterSpacing: "0.1em" }}>current</div>
-                  <div style={{ color: "#fff", fontSize: 16, fontWeight: 700 }}>{l.fmt(cur)}</div>
-                  <div style={{ color: "#444", fontSize: 9 }}>{cur}</div>
+                  <div style={{ color: "#aaa", fontSize: 11, textTransform: "uppercase", letterSpacing: "0.1em" }}>current</div>
+                  <div style={{ color: "#fff", fontSize: 18, fontWeight: 700 }}>{l.fmt(cur)}</div>
+                  <div style={{ color: "#777", fontSize: 11 }}>{cur}</div>
                 </div>
                 <div>
                   <input
@@ -147,16 +147,16 @@ export function TuningPage() {
                     placeholder={String(cur)}
                     onChange={(e) => setEdits((s) => ({ ...s, [l.key]: e.target.value }))}
                     style={{
-                      width: "100%", background: "#0a0a0a", color: outOfRange ? "#ff4444" : "#00ff88",
-                      border: "1px solid", borderColor: outOfRange ? "#ff4444" : pending ? "#00ff88" : "#2a2a2a",
-                      padding: "6px 8px", fontFamily: "inherit", fontSize: 13,
+                      width: "100%", background: "#0d0d0d", color: outOfRange ? "#ff4444" : "#00ff88",
+                      border: "1px solid", borderColor: outOfRange ? "#ff4444" : pending ? "#00ff88" : "#333",
+                      padding: "8px 10px", fontFamily: "inherit", fontSize: 14,
                     }}
                   />
-                  <div style={{ color: outOfRange ? "#ff4444" : "#444", fontSize: 9, marginTop: 3 }}>
+                  <div style={{ color: outOfRange ? "#ff6666" : "#888", fontSize: 11, marginTop: 4 }}>
                     range {lo} – {hi}
                   </div>
                 </div>
-                <div style={{ color: "#777", fontSize: 10, lineHeight: 1.5 }}>{l.effect}</div>
+                <div style={{ color: "#ccc", fontSize: 12, lineHeight: 1.6 }}>{l.effect}</div>
               </div>
             );
           })
@@ -168,9 +168,9 @@ export function TuningPage() {
             disabled={!dirty || busy}
             style={{
               background: dirty ? "#00ff88" : "#1a1a1a",
-              color: dirty ? "#050505" : "#444",
-              border: "none", padding: "8px 28px",
-              fontFamily: "inherit", fontSize: 12, fontWeight: 700,
+              color: dirty ? "#050505" : "#555",
+              border: "none", padding: "10px 32px",
+              fontFamily: "inherit", fontSize: 13, fontWeight: 700,
               letterSpacing: "0.1em", textTransform: "uppercase",
               cursor: dirty ? "pointer" : "default",
             }}
@@ -180,20 +180,20 @@ export function TuningPage() {
           <button
             onClick={load}
             style={{
-              background: "transparent", color: "#666", border: "1px solid #2a2a2a",
-              padding: "8px 16px", fontFamily: "inherit", fontSize: 11, cursor: "pointer",
+              background: "transparent", color: "#aaa", border: "1px solid #333",
+              padding: "10px 20px", fontFamily: "inherit", fontSize: 12, cursor: "pointer",
             }}
           >
             Reset / Refresh
           </button>
           {status && (
-            <span style={{ color: status.ok ? "#00ff88" : "#ff4444", fontSize: 11 }}>
+            <span style={{ color: status.ok ? "#00ff88" : "#ff4444", fontSize: 13 }}>
               {status.msg}
             </span>
           )}
         </div>
 
-        <div style={{ background: "#110d00", border: "1px solid #332a00", padding: "10px 14px", color: "#ffcc00", fontSize: 10, lineHeight: 1.6 }}>
+        <div style={{ background: "#110d00", border: "1px solid #443800", padding: "12px 16px", color: "#ffdd55", fontSize: 12, lineHeight: 1.7 }}>
           ⚠ Breakeven win rate ≈ your average entry price (+~2% fees/slippage). At 0.86 entries you need ~88%
           settled wins. Min Net Edge is the gate that keeps the model&apos;s target (~93%) above that line —
           lower it with care. Out-of-range values are rejected. The nightly calibrator writes to these same

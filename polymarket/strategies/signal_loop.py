@@ -31,6 +31,10 @@ _MIN_EDGE_NET_DEFAULT = float(os.getenv("MIN_EDGE_NET", "0.07"))  # 7¢: covers 
 # Pipeline-test mode: floor at $0 so a small bankroll can fire one real order.
 # Set MIN_ORDER_SIZE_USD=5 (or higher) before scaling capital.
 MIN_ORDER_SIZE_USD = float(os.getenv("MIN_ORDER_SIZE_USD", "0"))
+# Kelly hard cap as % of bankroll per trade.
+# 5% gives ~$1.10/order at €20/$22 bankroll (clears Polymarket's ~$1 exchange minimum).
+# At $333+ bankroll 5% produces $16+/trade — tighten to 1.5% (KELLY_MAX_PCT=0.015) then.
+KELLY_MAX_PCT = float(os.getenv("KELLY_MAX_PCT", "0.05"))
 SCAN_INTERVAL = 2.0  # seconds between signal evaluations
 
 
@@ -136,6 +140,7 @@ async def signal_loop(
             fair_prob=fair_direction,
             market_price=ask,
             bankroll=oracle.bankroll,
+            max_pct=KELLY_MAX_PCT,
             scale_factor=risk_mgr.position_scale_factor(),
         )
         # <= so zero-sized (no-edge) orders are always skipped even at floor 0

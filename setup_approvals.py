@@ -117,7 +117,15 @@ def main():
         print("3. Approving ConditionalTokens → NegRiskCollateralAdapter...")
         send_tx(w3, ctf_tok.functions.setApprovalForAll(neg_risk, True), acct, "NegRisk adapter approve")
 
-    print("\nAll approvals complete. Bot is ready to trade and redeem.")
+    # --- 4. ConditionalTokens → CTF Exchange (for sell orders) ---
+    approved_exch = ctf_tok.functions.isApprovedForAll(acct.address, exchange).call()
+    if approved_exch:
+        print("4. ConditionalTokens → CTF Exchange (sell orders): already approved ✓")
+    else:
+        print("4. Approving ConditionalTokens → CTF Exchange (sell orders)...")
+        send_tx(w3, ctf_tok.functions.setApprovalForAll(exchange, True), acct, "CTF exchange approve")
+
+    print("\nAll 4 approvals complete. Bot is ready to trade and redeem.")
 
 
 if __name__ == "__main__":

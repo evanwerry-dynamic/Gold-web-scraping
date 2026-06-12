@@ -18,7 +18,13 @@ import os
 import sys
 from web3 import Web3
 
-POLYGON_RPC      = "https://polygon-rpc.com"
+POLYGON_RPCS = [
+    "https://rpc.ankr.com/polygon",
+    "https://polygon-bor-rpc.publicnode.com",
+    "https://polygon.llamarpc.com",
+    "https://polygon-rpc.com",
+    "https://rpc-mainnet.matic.quiknode.pro",
+]
 CTF_EXCHANGE_V2  = "0xE111180000d2663C0091e4f400237545B87B996B"
 PUSD_ADDRESS     = "0xC011a7E12a19f7B1f670d46F03B03f3342E82DFB"
 CONDITIONAL_TOKENS          = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
@@ -74,9 +80,18 @@ def main():
         print("ERROR: Set POLYGON_PRIVATE_KEY environment variable")
         sys.exit(1)
 
-    w3 = Web3(Web3.HTTPProvider(POLYGON_RPC))
-    if not w3.is_connected():
-        print("ERROR: Cannot connect to Polygon RPC")
+    w3 = None
+    for rpc in POLYGON_RPCS:
+        try:
+            candidate = Web3(Web3.HTTPProvider(rpc, request_kwargs={"timeout": 10}))
+            if candidate.is_connected():
+                print(f"Connected via {rpc}")
+                w3 = candidate
+                break
+        except Exception:
+            pass
+    if w3 is None:
+        print("ERROR: Cannot connect to any Polygon RPC — check your internet connection")
         sys.exit(1)
 
     acct = w3.eth.account.from_key(pk)

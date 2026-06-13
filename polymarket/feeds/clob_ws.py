@@ -139,24 +139,27 @@ def _update_orderbook(oracle: OracleBuffer, msg: dict) -> None:
     # M5: track when we last got a book update
     m.last_book_update_ts = time.time()
 
-    # Only update each side when data is actually present — never write 0 for missing bids
+    # Only update each side when data is actually present — never write 0 for missing bids.
+    # Ignore dust orders at extreme prices (bid <0.02, ask >0.98): these are empty-book
+    # placeholders that remain when no real orders exist. Keeping them would make the
+    # signal loop compute negative edge on every evaluation and never trade.
     if bids:
-        # Polymarket CLOB returns bids sorted descending (best bid first)
         best_bid = float(bids[0]["price"])
-        if asset_id == m.yes_token_id:
-            m.yes_bid = best_bid
-        elif asset_id == m.no_token_id:
-            m.no_bid = best_bid
+        if best_bid >= 0.02:
+            if asset_id == m.yes_token_id:
+                m.yes_bid = best_bid
+            elif asset_id == m.no_token_id:
+                m.no_bid = best_bid
 
     if asks:
-        # Polymarket CLOB returns asks sorted ascending (best ask first)
         best_ask = float(asks[0]["price"])
         depth = sum(float(a["size"]) for a in asks[:3])
-        if asset_id == m.yes_token_id:
-            m.yes_ask = best_ask
-            m.ask_depth = depth
-        elif asset_id == m.no_token_id:
-            m.no_ask = best_ask
+        if best_ask <= 0.98:
+            if asset_id == m.yes_token_id:
+                m.yes_ask = best_ask
+                m.ask_depth = depth
+            elif asset_id == m.no_token_id:
+                m.no_ask = best_ask
 
 
 def _on_trade(oracle: OracleBuffer, msg: dict) -> None:

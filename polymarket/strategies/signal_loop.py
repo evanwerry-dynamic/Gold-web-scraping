@@ -25,12 +25,12 @@ from polymarket.calibrator import LIVE_PARAMS
 log = logging.getLogger(__name__)
 
 # Env-var defaults for initial startup (overridden by LIVE_PARAMS at runtime)
-_ENTRY_WINDOW_SECONDS_DEFAULT = float(os.getenv("ENTRY_SECONDS_BEFORE_CLOSE", "12"))  # +2s for CLOB submission latency
+_ENTRY_WINDOW_SECONDS_DEFAULT = float(os.getenv("ENTRY_SECONDS_BEFORE_CLOSE", "15"))  # +2s for CLOB latency, +3s buffer
 _MIN_DELTA_DEFAULT = float(os.getenv("MIN_DELTA_THRESHOLD", "0.001"))
-_MIN_EDGE_NET_DEFAULT = float(os.getenv("MIN_EDGE_NET", "0.07"))  # 7¢: covers 2-tick slip + fee drift
-# Pipeline-test mode: floor at $0 so a small bankroll can fire one real order.
-# Set MIN_ORDER_SIZE_USD=5 (or higher) before scaling capital.
-MIN_ORDER_SIZE_USD = float(os.getenv("MIN_ORDER_SIZE_USD", "0"))
+_MIN_EDGE_NET_DEFAULT = float(os.getenv("MIN_EDGE_NET", "0.05"))  # 5¢ net after fees — 7¢ was too tight (blocked valid edge after dynamic fee)
+# Minimum order size in USD. Polymarket exchange minimum is ~$1; below that orders
+# fail at the CLOB. Default 1.0 prevents dust orders on small accounts.
+MIN_ORDER_SIZE_USD = float(os.getenv("MIN_ORDER_SIZE_USD", "1.0"))
 # Kelly hard cap as % of bankroll per trade.
 # 5% gives ~$1.10/order at €20/$22 bankroll (clears Polymarket's ~$1 exchange minimum).
 # At $333+ bankroll 5% produces $16+/trade — tighten to 1.5% (KELLY_MAX_PCT=0.015) then.
@@ -85,13 +85,6 @@ async def signal_loop(
         if last_fired_window == market.market_id:
             continue
 
-        # Block trades until the vol estimator has real data (≥5 samples).
-        # With the 0.0002 fallback sigma and only 1-2 samples, z-scores are
-        # wildly inflated and fair_value collapses to 0.0 or 1.0 on any small delta.
-        if not oracle.vol_estimator.is_ready():
-            log.debug("[A] Vol estimator not ready (< 5 samples) — skipping")
-            continue
-
         delta = oracle.window_delta()
         if abs(delta) < MIN_DELTA:
             log.info(
@@ -121,9 +114,9 @@ async def signal_loop(
         tradeable, net_edge = should_trade(fair_direction, ask, MIN_EDGE_NET)
 
         if not tradeable:
-            log.debug(
-                f"[A] No trade: δ={delta:.4%} fair_{direction}={fair_direction:.3f} "
-                f"ask={ask:.3f} net_edge={net_edge:.4f}"
+            log.info(
+                f"[A] Edge too low: δ={delta:.4%} fair_{direction}={fair_direction:.3f} "
+                f"ask={ask:.3f} net_edge={net_edge:.4f} < {MIN_EDGE_NET:.2f} — skip"
             )
             continue
 

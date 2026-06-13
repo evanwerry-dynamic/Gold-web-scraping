@@ -70,6 +70,9 @@ async def run() -> None:
     if oracle.bankroll <= 0:
         log.warning(f"Bankroll is {oracle.bankroll} after restore — resetting to ${initial_bankroll}")
         oracle.bankroll = initial_bankroll
+    # Sync peak to current bankroll — prevents false drawdown halt after redeploy
+    # if persisted bankroll is below the original initial (e.g. after a losing session).
+    oracle.peak_bankroll = max(oracle.bankroll, oracle.peak_bankroll)
 
     # Restore tuned strategy params (calibrator or dashboard Tuning tab) so
     # they survive redeploys. Out-of-range values are dropped, not clamped.

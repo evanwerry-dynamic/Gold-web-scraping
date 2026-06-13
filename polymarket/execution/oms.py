@@ -81,9 +81,9 @@ async def _process_order(
         log.info(f"[OMS] Order dropped — emergency halt active ({intent.get('strategy')})")
         return
 
-    # Discard stale orders older than 8s
+    # Discard stale orders older than 12s (entry window is 15s; allow 3s OMS queue lag)
     age = time.time() - intent.get("queued_at", time.time())
-    if age > 8.0:
+    if age > 12.0:
         log.warning(f"[OMS] Discarding stale {intent.get('strategy')} order ({age:.1f}s old)")
         return
 

@@ -11,6 +11,7 @@ Sanity check loop — runs every 60s.
 """
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
@@ -24,7 +25,11 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 SANITY_INTERVAL = 60.0
-MIN_MATIC = 1.0            # POL tokens
+# POL gas threshold. Orders are gasless on Polymarket (signed off-chain); POL is
+# only spent on redemption (~0.01 POL each), so 1.0 POL was wildly conservative
+# and false-halted small accounts. Env-configurable; default 0.02 (~2 redemptions
+# of headroom). Top up POL when convenient — it's only ~$0.07/POL.
+MIN_MATIC = float(os.getenv("MIN_MATIC", "0.02"))
 WS_STALE_THRESHOLD = 30.0  # seconds
 
 

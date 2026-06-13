@@ -32,18 +32,33 @@ _client = None  # Singleton CLOB client
 
 
 def get_web3():
-    """Return a connected Web3 instance (primary RPC with fallback)."""
+    """Return a connected Web3 instance, trying multiple keyless public RPCs.
+
+    Many public RPCs (polygon-rpc.com, ankr) reject cloud/datacenter IPs with
+    401/451. publicnode + llamarpc are keyless and work from Railway. Any
+    env-configured RPCs are tried first so a paid endpoint can override.
+    """
     from web3 import Web3
-    primary = os.getenv("POLYGON_RPC_PRIMARY", "https://polygon-rpc.com")
-    fallback = os.getenv("POLYGON_RPC_FALLBACK", "https://rpc.ankr.com/polygon")
-    for url in (primary, fallback):
+    candidates = [
+        os.getenv("POLYGON_RPC_PRIMARY"),
+        os.getenv("POLYGON_RPC_FALLBACK"),
+        "https://polygon-bor-rpc.publicnode.com",
+        "https://polygon.llamarpc.com",
+        "https://rpc.ankr.com/polygon",
+        "https://polygon-rpc.com",
+    ]
+    seen = set()
+    for url in candidates:
+        if not url or url in seen:
+            continue
+        seen.add(url)
         try:
             w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 10}))
             if w3.is_connected():
                 return w3
         except Exception:
             continue
-    raise RuntimeError("Cannot connect to Polygon RPC (tried primary and fallback)")
+    raise RuntimeError("Cannot connect to any Polygon RPC")
 
 
 _CTF_ABI = [

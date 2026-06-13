@@ -123,15 +123,13 @@ async def _redeem_position(
         log.info(f"[paper] Simulating redemption: {condition_id} {shares:.2f}sh")
         return
 
-    from web3 import Web3
-    from polymarket.execution.wallet import CTF_COLLATERAL_ADAPTER, USDCE_ADDRESS
+    from polymarket.execution.wallet import CTF_COLLATERAL_ADAPTER, USDCE_ADDRESS, get_web3
 
     pk = os.getenv("POLYGON_PRIVATE_KEY", "")
     if not pk:
         raise EnvironmentError("POLYGON_PRIVATE_KEY required for live redemption")
 
-    rpc = os.getenv("POLYGON_RPC_PRIMARY", "https://polygon-rpc.com")
-    w3 = Web3(Web3.HTTPProvider(rpc, request_kwargs={"timeout": 15}))
+    w3 = get_web3()
     acct = w3.eth.account.from_key(pk)
 
     ctf_abi = [{

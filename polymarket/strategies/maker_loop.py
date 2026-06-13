@@ -90,14 +90,16 @@ async def maker_loop(
             log.debug(f"[B] Quote suppressed: {reason}")
             continue
 
-        # Each quote side is 0.5% of bankroll — never a hardcoded floor that
-        # could commit a large fraction of a small account. Go dormant below
-        # the minimum viable order size rather than oversize.
-        quote_size = oracle.bankroll * QUOTE_PCT
-        if quote_size < MIN_VIABLE_QUOTE:
+        # Read live-tunable params so the dashboard Tuning tab takes effect immediately.
+        from polymarket.calibrator import LIVE_PARAMS
+        quote_pct = LIVE_PARAMS.get("maker_quote_pct", QUOTE_PCT)
+        min_viable = LIVE_PARAMS.get("min_order_size_usd", MIN_VIABLE_QUOTE)
+
+        quote_size = oracle.bankroll * quote_pct
+        if quote_size < min_viable:
             log.info(
                 f"[B] Bankroll ${oracle.bankroll:.2f} too small for maker quotes "
-                f"(5% = ${quote_size:.2f} < ${MIN_VIABLE_QUOTE:.2f} min) — dormant"
+                f"({quote_pct*100:.0f}% = ${quote_size:.2f} < ${min_viable:.2f} min) — dormant"
             )
             continue
 

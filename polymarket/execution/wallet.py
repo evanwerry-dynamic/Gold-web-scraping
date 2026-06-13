@@ -149,19 +149,21 @@ def get_clob_client():
         )
 
     if proxy_wallet:
-        # POLY_GNOSIS_SAFE: Polymarket creates a Gnosis Safe wallet for MetaMask/browser
-        # wallet users. The Safe address is the maker/funder; the EOA private key signs
-        # orders on behalf of the Safe. POLY_PROXY (type 1) is only for Magic Link accounts
-        # that use Polymarket's EIP-1167 minimal proxy wallets.
+        # POLY_PROXY (type 1): Polymarket's proxy wallet shown in the profile page as
+        # "For API use only". The proxy address is the maker/funder; the EOA private key
+        # signs orders. This is the correct type for all MetaMask/browser wallet accounts
+        # on Polymarket CLOB V2 — the profile address is their API proxy, not a Gnosis Safe.
+        sig_type_name = os.getenv("CLOB_SIGNATURE_TYPE", "POLY_PROXY").upper()
+        sig_type = getattr(SignatureTypeV2, sig_type_name, SignatureTypeV2.POLY_PROXY)
         _client = ClobClient(
             host="https://clob.polymarket.com",
             chain_id=137,
             key=pk,
             creds=creds,
-            signature_type=int(SignatureTypeV2.POLY_GNOSIS_SAFE),
+            signature_type=int(sig_type),
             funder=proxy_wallet,
         )
-        log.info(f"CLOB client initialized — POLY_GNOSIS_SAFE mode (funder={proxy_wallet[:10]}…)")
+        log.info(f"CLOB client initialized — {sig_type_name} mode (funder={proxy_wallet[:10]}…)")
     else:
         # Fall back to EOA signing. Works for paper trading and API reads;
         # live order submission requires POLY_PROXY_ADDRESS to be set.

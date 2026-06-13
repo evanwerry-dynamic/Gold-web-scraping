@@ -146,7 +146,7 @@ async def _redeem_position(
     }]
 
     contract = w3.eth.contract(
-        address=Web3.to_checksum_address(CTF_COLLATERAL_ADAPTER), abi=ctf_abi
+        address=w3.to_checksum_address(CTF_COLLATERAL_ADAPTER), abi=ctf_abi
     )
 
     # Binary markets: YES/UP = index 1, NO/DOWN = index 2
@@ -159,7 +159,7 @@ async def _redeem_position(
     )
 
     tx = contract.functions.redeemPositions(
-        Web3.to_checksum_address(USDCE_ADDRESS),
+        w3.to_checksum_address(USDCE_ADDRESS),
         b"\x00" * 32,
         cid_bytes,
         [index_set],

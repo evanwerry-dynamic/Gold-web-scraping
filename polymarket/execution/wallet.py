@@ -153,7 +153,7 @@ def get_clob_client():
         # "For API use only". The proxy address is the maker/funder; the EOA private key
         # signs orders. This is the correct type for all MetaMask/browser wallet accounts
         # on Polymarket CLOB V2 — the profile address is their API proxy, not a Gnosis Safe.
-        sig_type_name = os.getenv("CLOB_SIGNATURE_TYPE", "POLY_PROXY").upper()
+        sig_type_name = os.getenv("CLOB_SIGNATURE_TYPE", "POLY_1271").upper()
         sig_type = getattr(SignatureTypeV2, sig_type_name, SignatureTypeV2.POLY_PROXY)
         _client = ClobClient(
             host="https://clob.polymarket.com",

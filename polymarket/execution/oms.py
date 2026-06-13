@@ -289,20 +289,23 @@ async def _paper_fill(
 
 
 async def _register_balance_allowance() -> None:
-    """Call update_balance_allowance so the CLOB recognises our deposit wallet.
-
-    Polymarket CLOB V2 requires this once-per-session call before it will accept
-    orders from a maker address. Without it every order fails with
-    "maker address not allowed, please use the deposit wallet flow".
-    """
+    """Call update_balance_allowance so the CLOB recognises our deposit wallet."""
     try:
         from polymarket.execution.wallet import get_clob_client
         client = get_clob_client()
         loop = asyncio.get_running_loop()
+
+        # First check current state so we can see what the CLOB knows about us.
+        try:
+            current = await loop.run_in_executor(None, client.get_balance_allowance)
+            log.info(f"[OMS] CLOB balance/allowance (before update): {current}")
+        except Exception as exc:
+            log.warning(f"[OMS] get_balance_allowance failed: {exc!r}")
+
         result = await loop.run_in_executor(None, client.update_balance_allowance)
         log.info(f"[OMS] Balance/allowance synced with CLOB: {result}")
     except Exception as exc:
-        log.warning(f"[OMS] Balance/allowance sync failed (orders may be rejected): {exc!r}")
+        log.warning(f"[OMS] Balance/allowance sync failed: {exc!r}")
 
 
 async def _submit_to_clob(intent: dict, order_id: str) -> dict:

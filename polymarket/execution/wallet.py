@@ -183,77 +183,65 @@ def get_clob_client():
 
 
 async def get_matic_balance() -> float:
-    """Return MATIC balance for gas monitoring."""
-    try:
-        from web3 import Web3
-        w3 = get_web3()
-        pk = os.getenv("POLYGON_PRIVATE_KEY", "")
-        if not pk:
-            return 0.0
-        acct = w3.eth.account.from_key(pk)
-        bal_wei = w3.eth.get_balance(acct.address)
-        return float(Web3.from_wei(bal_wei, "ether"))
-    except Exception as exc:
-        log.warning(f"MATIC balance check failed: {exc!r}")
+    """Return MATIC/POL balance for gas monitoring. Raises on RPC failure."""
+    from web3 import Web3
+    w3 = get_web3()  # raises RuntimeError if all RPCs are unreachable
+    pk = os.getenv("POLYGON_PRIVATE_KEY", "")
+    if not pk:
         return 0.0
+    acct = w3.eth.account.from_key(pk)
+    bal_wei = w3.eth.get_balance(acct.address)
+    return float(Web3.from_wei(bal_wei, "ether"))
 
 
 async def get_pusd_balance() -> float:
-    """Return pUSD balance for the active trading address (proxy or EOA)."""
-    try:
-        from web3 import Web3
-        w3 = get_web3()
-        pk = os.getenv("POLYGON_PRIVATE_KEY", "")
-        if not pk:
-            return 0.0
-        proxy = (
-            os.getenv("POLY_PROXY_ADDRESS", "").strip()
-            or os.getenv("POLY_ADDRESS", "").strip()
-        )
-        acct = w3.eth.account.from_key(pk)
-        check_addr = proxy if proxy else acct.address
-        abi = [{"inputs": [{"name": "account", "type": "address"}],
-                "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}],
-                "stateMutability": "view", "type": "function"}]
-        contract = w3.eth.contract(
-            address=Web3.to_checksum_address(PUSD_ADDRESS), abi=abi
-        )
-        raw = contract.functions.balanceOf(Web3.to_checksum_address(check_addr)).call()
-        return raw / 1e6  # 6 decimals
-    except Exception as exc:
-        log.warning(f"pUSD balance check failed: {exc!r}")
+    """Return pUSD balance for the active trading address. Raises on RPC failure."""
+    from web3 import Web3
+    w3 = get_web3()  # raises RuntimeError if all RPCs are unreachable
+    pk = os.getenv("POLYGON_PRIVATE_KEY", "")
+    if not pk:
         return 0.0
+    proxy = (
+        os.getenv("POLY_PROXY_ADDRESS", "").strip()
+        or os.getenv("POLY_ADDRESS", "").strip()
+    )
+    acct = w3.eth.account.from_key(pk)
+    check_addr = proxy if proxy else acct.address
+    abi = [{"inputs": [{"name": "account", "type": "address"}],
+            "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}],
+            "stateMutability": "view", "type": "function"}]
+    contract = w3.eth.contract(
+        address=Web3.to_checksum_address(PUSD_ADDRESS), abi=abi
+    )
+    raw = contract.functions.balanceOf(Web3.to_checksum_address(check_addr)).call()
+    return raw / 1e6  # 6 decimals
 
 
 async def get_pusd_allowance() -> float:
-    """Return pUSD spending allowance granted to CTF Exchange V2 for the active trading address."""
-    try:
-        from web3 import Web3
-        w3 = get_web3()
-        pk = os.getenv("POLYGON_PRIVATE_KEY", "")
-        if not pk:
-            return 0.0
-        proxy = (
-            os.getenv("POLY_PROXY_ADDRESS", "").strip()
-            or os.getenv("POLY_ADDRESS", "").strip()
-        )
-        acct = w3.eth.account.from_key(pk)
-        check_addr = proxy if proxy else acct.address
-        abi = [{"inputs": [{"name": "owner", "type": "address"},
-                            {"name": "spender", "type": "address"}],
-                "name": "allowance", "outputs": [{"name": "", "type": "uint256"}],
-                "stateMutability": "view", "type": "function"}]
-        contract = w3.eth.contract(
-            address=Web3.to_checksum_address(PUSD_ADDRESS), abi=abi
-        )
-        raw = contract.functions.allowance(
-            Web3.to_checksum_address(check_addr),
-            Web3.to_checksum_address(CTF_EXCHANGE_V2)
-        ).call()
-        return raw / 1e6  # 6 decimals
-    except Exception as exc:
-        log.warning(f"pUSD allowance check failed: {exc!r}")
+    """Return pUSD allowance for CTF Exchange V2. Raises on RPC failure."""
+    from web3 import Web3
+    w3 = get_web3()  # raises RuntimeError if all RPCs are unreachable
+    pk = os.getenv("POLYGON_PRIVATE_KEY", "")
+    if not pk:
         return 0.0
+    proxy = (
+        os.getenv("POLY_PROXY_ADDRESS", "").strip()
+        or os.getenv("POLY_ADDRESS", "").strip()
+    )
+    acct = w3.eth.account.from_key(pk)
+    check_addr = proxy if proxy else acct.address
+    abi = [{"inputs": [{"name": "owner", "type": "address"},
+                        {"name": "spender", "type": "address"}],
+            "name": "allowance", "outputs": [{"name": "", "type": "uint256"}],
+            "stateMutability": "view", "type": "function"}]
+    contract = w3.eth.contract(
+        address=Web3.to_checksum_address(PUSD_ADDRESS), abi=abi
+    )
+    raw = contract.functions.allowance(
+        Web3.to_checksum_address(check_addr),
+        Web3.to_checksum_address(CTF_EXCHANGE_V2)
+    ).call()
+    return raw / 1e6  # 6 decimals
 
 
 async def approve_pusd(amount_usd: float) -> None:

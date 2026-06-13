@@ -106,7 +106,11 @@ async def _check_ghost_positions(oracle: OracleBuffer) -> None:
 
 
 async def _check_gas(oracle: OracleBuffer) -> None:
-    matic = await get_matic_balance()
+    try:
+        matic = await get_matic_balance()
+    except Exception as exc:
+        log.warning(f"Gas check skipped — RPC unreachable: {exc!r}")
+        return
     if matic < MIN_MATIC:
         log.critical(
             f"LOW GAS: {matic:.4f} POL — transactions will fail. Replenish immediately."
@@ -120,14 +124,22 @@ async def _check_pusd_allowance(oracle: OracleBuffer) -> None:
     # Check the CTF Exchange allowance (not balance — balance is checked by
     # _check_bankroll_vs_chain). Allowance is set to max_uint256 by setup_approvals.py
     # so this should virtually never fire; it's a backstop for manual revokes.
-    allowance = await get_pusd_allowance()
+    try:
+        allowance = await get_pusd_allowance()
+    except Exception as exc:
+        log.warning(f"pUSD allowance check skipped — RPC unreachable: {exc!r}")
+        return
     if allowance < oracle.bankroll * 0.5 and oracle.bankroll > 0:
         log.warning(
             f"pUSD allowance low ({allowance:.2f} < {oracle.bankroll * 0.5:.2f}) "
             "— re-approving CTF Exchange"
         )
-        await approve_pusd(oracle.bankroll * 2)
-        allowance_after = await get_pusd_allowance()
+        try:
+            await approve_pusd(oracle.bankroll * 2)
+            allowance_after = await get_pusd_allowance()
+        except Exception as exc:
+            log.warning(f"pUSD re-approve skipped — RPC unreachable: {exc!r}")
+            return
         if allowance_after < oracle.bankroll * 0.5:
             log.critical(
                 f"pUSD re-approve failed: allowance still {allowance_after:.2f} "

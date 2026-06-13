@@ -117,8 +117,7 @@ async def get_matic_balance() -> float:
     """Return MATIC balance for gas monitoring."""
     try:
         from web3 import Web3
-        rpc = os.getenv("POLYGON_RPC_PRIMARY", "https://polygon-rpc.com")
-        w3 = Web3(Web3.HTTPProvider(rpc))
+        w3 = get_web3()
         pk = os.getenv("POLYGON_PRIVATE_KEY", "")
         if not pk:
             return 0.0
@@ -134,8 +133,7 @@ async def get_pusd_balance() -> float:
     """Return pUSD balance (6 decimals)."""
     try:
         from web3 import Web3
-        rpc = os.getenv("POLYGON_RPC_PRIMARY", "https://polygon-rpc.com")
-        w3 = Web3(Web3.HTTPProvider(rpc))
+        w3 = get_web3()
         pk = os.getenv("POLYGON_PRIVATE_KEY", "")
         if not pk:
             return 0.0
@@ -160,8 +158,7 @@ async def get_pusd_allowance() -> float:
     """
     try:
         from web3 import Web3
-        rpc = os.getenv("POLYGON_RPC_PRIMARY", "https://polygon-rpc.com")
-        w3 = Web3(Web3.HTTPProvider(rpc))
+        w3 = get_web3()
         pk = os.getenv("POLYGON_PRIVATE_KEY", "")
         if not pk:
             return 0.0
@@ -195,8 +192,7 @@ async def approve_pusd(amount_usd: float) -> None:
     log.info(f"Approving CTF Exchange V2 for {amount_usd:.2f} pUSD ({amount_units} units)...")
     try:
         from web3 import Web3
-        rpc = os.getenv("POLYGON_RPC_PRIMARY", "https://polygon-rpc.com")
-        w3 = Web3(Web3.HTTPProvider(rpc))
+        w3 = get_web3()
         pk = os.getenv("POLYGON_PRIVATE_KEY", "")
         acct = w3.eth.account.from_key(pk)
         abi = [{"inputs": [{"name": "spender", "type": "address"},

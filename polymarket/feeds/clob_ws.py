@@ -46,19 +46,24 @@ async def clob_ws_loop(oracle: OracleBuffer) -> None:
                 ping_interval=20,
                 ping_timeout=10,
                 close_timeout=5,
-                additional_headers={"Origin": "https://polymarket.com"},
+                additional_headers={
+                    "Origin": "https://polymarket.com",
+                    "User-Agent": "Mozilla/5.0",
+                },
             ) as ws:
-                subscribe = {
-                    "type": "Market",
-                    "assets_ids": [market.yes_token_id, market.no_token_id],
-                    "markets": [market.condition_id],
-                }
-                await ws.send(json.dumps(subscribe))
+                # Polymarket CLOB V2 WS: subscribe to each token ID separately.
+                # Sending both in one message or including 'markets' causes immediate close.
+                for token_id in (market.yes_token_id, market.no_token_id):
+                    if token_id:
+                        await ws.send(json.dumps({
+                            "type": "Market",
+                            "assets_ids": [token_id],
+                        }))
                 # Mark connected immediately — paper markets produce no book events
                 # so last_clob_ts must be refreshed continuously while the socket
                 # is alive, not only on incoming messages.
                 oracle.last_clob_ts = time.time()
-                log.info(f"CLOB WS subscribed to {market.market_id}")
+                log.info(f"CLOB WS subscribed to {market.market_id} (yes={market.yes_token_id[:8] if market.yes_token_id else 'None'}...)")
 
                 keepalive = asyncio.create_task(_keepalive(oracle))
                 try:

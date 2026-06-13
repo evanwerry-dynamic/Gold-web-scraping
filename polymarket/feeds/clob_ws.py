@@ -68,9 +68,10 @@ async def clob_ws_loop(oracle: OracleBuffer) -> None:
                 keepalive = asyncio.create_task(_keepalive(oracle))
                 try:
                     async for raw in ws:
-                        msg = json.loads(raw)
-                        event_type = msg.get("event_type", "")
-                        # H6: do NOT update last_clob_ts here — only in _on_book_update and _on_trade
+                        parsed = json.loads(raw)
+                        # Polymarket CLOB V2 sends a JSON ARRAY of event objects per
+                        # frame (sometimes a single object). Normalize to a list.
+                        events = parsed if isinstance(parsed, list) else [parsed]
 
                         # Reconnect immediately when active market rotates — don't
                         # wait for the old connection to close on its own (can take minutes)
@@ -82,10 +83,15 @@ async def clob_ws_loop(oracle: OracleBuffer) -> None:
                             )
                             break
 
-                        if event_type == "book":
-                            _update_orderbook(oracle, msg)
-                        elif event_type == "trade":
-                            _on_trade(oracle, msg)
+                        for msg in events:
+                            if not isinstance(msg, dict):
+                                continue
+                            event_type = msg.get("event_type", "")
+                            # H6: last_clob_ts updated only in _update_orderbook/_on_trade
+                            if event_type == "book":
+                                _update_orderbook(oracle, msg)
+                            elif event_type == "trade":
+                                _on_trade(oracle, msg)
                 finally:
                     keepalive.cancel()
 

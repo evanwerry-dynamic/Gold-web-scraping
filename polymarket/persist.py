@@ -6,6 +6,7 @@ P&L) to disk every 30s. On restart, main.py reloads this state.
 """
 import asyncio
 import logging
+import os
 import time
 
 from polymarket.oracle_buffer import OracleBuffer
@@ -57,11 +58,21 @@ def restore_state(oracle: OracleBuffer) -> None:
     if not state:
         return
 
-    # Only restore bankroll if it's a positive value — never overwrite
-    # INITIAL_BANKROLL with a zero that got persisted during a crash.
-    saved_bankroll = state.get("bankroll", 0.0)
-    if saved_bankroll > 0:
-        oracle.bankroll = saved_bankroll
+    # BANKROLL_OVERRIDE lets the user force a specific bankroll via env var,
+    # taking precedence over whatever is persisted (useful after adding funds).
+    override = os.getenv("BANKROLL_OVERRIDE", "").strip()
+    if override:
+        try:
+            oracle.bankroll = float(override)
+            log.info(f"Bankroll overridden by BANKROLL_OVERRIDE={oracle.bankroll:.2f}")
+        except ValueError:
+            log.warning(f"BANKROLL_OVERRIDE={override!r} is not a valid number — ignored")
+    else:
+        # Only restore bankroll if it's a positive value — never overwrite
+        # INITIAL_BANKROLL with a zero that got persisted during a crash.
+        saved_bankroll = state.get("bankroll", 0.0)
+        if saved_bankroll > 0:
+            oracle.bankroll = saved_bankroll
     # Recompute P&L from the trade log — never restore stale in-memory totals.
     # This keeps LIVE header and HISTORY page always in sync after a redeploy.
     from polymarket.data import load_trade_history

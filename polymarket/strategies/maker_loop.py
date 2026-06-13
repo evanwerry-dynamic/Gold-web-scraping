@@ -74,16 +74,20 @@ async def maker_loop(
             imbalance = 1.0
         pull_asks = imbalance > IMBALANCE_THRESHOLD
 
-        mid = (market.yes_bid + market.yes_ask) / 2
-        bid_price = round(mid - QUOTE_SPREAD / 2, 2)
-        ask_price = round(mid + QUOTE_SPREAD / 2, 2)
+        # Join the touch: post AT the current best bid/ask so POST_ONLY orders
+        # rest as maker liquidity. Quoting at mid ± 1¢ on the fast, ~1¢-wide
+        # 5-min book put quotes on top of the opposite side and they were
+        # rejected as crossers ("invalid post-only order: order crosses book").
+        TICK = 0.01
+        bid_price = round(market.yes_bid, 2)
+        ask_price = round(market.yes_ask, 2)
 
-        # Clamp to valid range and ensure POST_ONLY orders never cross the book.
-        # bid must be strictly below best ask; ask must be strictly above best bid.
-        bid_price = max(0.01, min(bid_price, round(market.yes_ask - 0.01, 2)))
-        ask_price = max(ask_price, round(market.yes_bid + 0.01, 2))
-        bid_price = min(bid_price, 0.99)
-        ask_price = min(ask_price, 0.99)
+        # Defensive: stay strictly passive even if the book is stale/crossed —
+        # a buy must sit below the ask and a sell above the bid.
+        bid_price = min(bid_price, round(market.yes_ask - TICK, 2))
+        ask_price = max(ask_price, round(market.yes_bid + TICK, 2))
+        bid_price = max(0.01, min(bid_price, 0.99))
+        ask_price = max(0.01, min(ask_price, 0.99))
 
         allowed, reason = risk_mgr.allow_trade(oracle.bankroll)
         if not allowed:

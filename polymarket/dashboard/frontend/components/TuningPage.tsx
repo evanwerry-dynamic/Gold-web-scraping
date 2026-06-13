@@ -46,6 +46,13 @@ const LEVERS: {
     effect: "Hard cap per trade. 0.05 = 5% (~$1.10 at $22 bankroll). Tighten to 0.015 above ~$333 bankroll.",
     fmt: (v) => `${(v * 100).toFixed(1)}%`,
   },
+  {
+    key: "maker_quote_pct",
+    label: "Maker Quote Size",
+    unit: "fraction of bankroll per side",
+    effect: "Strategy B quote size per side. 0.06 = 6% (~$1.14 at $19). Each side must clear Min Order Size or Strategy B goes dormant.",
+    fmt: (v) => `${(v * 100).toFixed(1)}%`,
+  },
 ];
 
 export function TuningPage() {

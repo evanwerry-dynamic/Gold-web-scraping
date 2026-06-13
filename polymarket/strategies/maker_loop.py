@@ -78,9 +78,12 @@ async def maker_loop(
         bid_price = round(mid - QUOTE_SPREAD / 2, 2)
         ask_price = round(mid + QUOTE_SPREAD / 2, 2)
 
-        # Clamp to valid range
-        bid_price = max(0.01, min(0.99, bid_price))
-        ask_price = max(0.01, min(0.99, ask_price))
+        # Clamp to valid range and ensure POST_ONLY orders never cross the book.
+        # bid must be strictly below best ask; ask must be strictly above best bid.
+        bid_price = max(0.01, min(bid_price, round(market.yes_ask - 0.01, 2)))
+        ask_price = max(ask_price, round(market.yes_bid + 0.01, 2))
+        bid_price = min(bid_price, 0.99)
+        ask_price = min(ask_price, 0.99)
 
         allowed, reason = risk_mgr.allow_trade(oracle.bankroll)
         if not allowed:

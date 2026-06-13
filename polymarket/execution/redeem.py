@@ -168,6 +168,7 @@ async def _redeem_position(
         "nonce": nonce,
         "gas": 200_000,
         "chainId": 137,
+        "gasPrice": w3.to_wei(50, "gwei"),  # explicit — avoids web3 RPC call that returns None
     })
 
     signed = w3.eth.account.sign_transaction(tx, pk)

@@ -364,8 +364,18 @@ async def _track_until_terminal(
                     return
                 _filled_order_ids.append(tracked_id)
 
-                fill_price = float(order.get("avgPrice") or intent["price"])
-                shares = float(order.get("sizeMatched") or order.get("size") or intent.get("shares", 0))
+                fill_price = float(
+                    order.get("price")
+                    or order.get("avgPrice")
+                    or intent["price"]
+                )
+                shares = float(
+                    order.get("size_matched")
+                    or order.get("sizeMatched")
+                    or order.get("original_size")
+                    or order.get("size")
+                    or intent.get("shares", 0)
+                )
                 dollar_size = shares * fill_price
 
                 pos = OpenPosition(
@@ -401,7 +411,7 @@ async def _track_until_terminal(
                 oracle.strategy_phase = "HOLD"
                 return
 
-            if status in ("cancelled", "rejected"):
+            if status in ("cancelled", "canceled", "rejected"):
                 log.info(f"[OMS/live] Order {status}: {tracked_id}")
                 oracle.strategy_phase = "HOLD"
                 return
@@ -422,7 +432,10 @@ async def _track_until_terminal(
     log.warning(f"[OMS/live] Order {tracked_id} timed out after {timeout}s — cancelling")
     cancel_failed = False
     try:
-        await loop.run_in_executor(None, client.cancel, tracked_id)
+        from py_clob_client_v2.clob_types import OrderPayload
+        await loop.run_in_executor(
+            None, client.cancel_order, OrderPayload(orderID=tracked_id)
+        )
     except Exception as exc:
         log.warning(f"[OMS/live] Cancel failed for {tracked_id}: {exc!r}")
         cancel_failed = True
@@ -435,8 +448,18 @@ async def _track_until_terminal(
             status = (order.get("status") or "").lower()
             if status in ("matched", "filled") and tracked_id not in _filled_order_ids:
                 _filled_order_ids.append(tracked_id)
-                fill_price = float(order.get("avgPrice") or intent.get("price", 0))
-                shares = float(order.get("sizeMatched") or order.get("size") or intent.get("shares", 0))
+                fill_price = float(
+                    order.get("price")
+                    or order.get("avgPrice")
+                    or intent.get("price", 0)
+                )
+                shares = float(
+                    order.get("size_matched")
+                    or order.get("sizeMatched")
+                    or order.get("original_size")
+                    or order.get("size")
+                    or intent.get("shares", 0)
+                )
                 dollar_size = shares * fill_price
                 pos = OpenPosition(
                     market_id=intent["market_id"],

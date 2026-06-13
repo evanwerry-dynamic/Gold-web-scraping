@@ -71,15 +71,35 @@ async def _check_ghost_positions(oracle: OracleBuffer) -> None:
         return  # No CLOB positions in paper mode
 
     try:
-        from polymarket.execution.wallet import get_clob_client
-        client = get_clob_client()
-        # Fetch actual open positions from CLOB
-        actual = client.get_positions() if hasattr(client, "get_positions") else {}
-        for market_id, pos_data in actual.items():
-            if market_id not in oracle.open_positions:
+        # Positions live on the Polymarket Data API, not the CLOB client
+        # (py_clob_client_v2 has no get_positions method). Query by wallet.
+        from polymarket.execution.wallet import get_web3
+        import os
+        import requests
+
+        pk = os.getenv("POLYGON_PRIVATE_KEY", "")
+        if not pk:
+            return
+        acct = get_web3().eth.account.from_key(pk)
+        loop = asyncio.get_running_loop()
+        resp = await loop.run_in_executor(
+            None,
+            lambda: requests.get(
+                "https://data-api.polymarket.com/positions",
+                params={"user": acct.address, "sizeThreshold": 0.01},
+                timeout=10,
+            ),
+        )
+        resp.raise_for_status()
+        actual = resp.json() or []
+        tracked_tokens = {p.token_id for p in oracle.open_positions.values()}
+        for pos_data in actual:
+            token_id = str(pos_data.get("asset") or pos_data.get("tokenId") or "")
+            if token_id and token_id not in tracked_tokens:
                 log.error(
-                    f"GHOST POSITION: {market_id} "
-                    f"size={pos_data.get('size', '?')} — adding to tracking"
+                    f"GHOST POSITION: token={token_id[:12]}… "
+                    f"size={pos_data.get('size', '?')} "
+                    f"market={pos_data.get('title', '?')} — not in bot tracking"
                 )
     except Exception as exc:
         log.warning(f"Ghost position check failed: {exc!r}")

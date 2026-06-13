@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from polymarket.oracle_buffer import OracleBuffer
-from polymarket.execution.wallet import get_matic_balance, get_pusd_balance, approve_pusd
+from polymarket.execution.wallet import get_matic_balance, get_pusd_balance, get_pusd_allowance, approve_pusd
 
 if TYPE_CHECKING:
     from polymarket.risk import RiskManager
@@ -97,22 +97,24 @@ async def _check_gas(oracle: OracleBuffer) -> None:
 
 
 async def _check_pusd_allowance(oracle: OracleBuffer) -> None:
-    pusd_bal = await get_pusd_balance()
-    if pusd_bal < oracle.bankroll * 0.5 and oracle.bankroll > 0:
+    # Check the CTF Exchange allowance (not balance — balance is checked by
+    # _check_bankroll_vs_chain). Allowance is set to max_uint256 by setup_approvals.py
+    # so this should virtually never fire; it's a backstop for manual revokes.
+    allowance = await get_pusd_allowance()
+    if allowance < oracle.bankroll * 0.5 and oracle.bankroll > 0:
         log.warning(
-            f"pUSD allowance low ({pusd_bal:.2f} < {oracle.bankroll * 0.5:.2f}) "
+            f"pUSD allowance low ({allowance:.2f} < {oracle.bankroll * 0.5:.2f}) "
             "— re-approving CTF Exchange"
         )
         await approve_pusd(oracle.bankroll * 2)
-        # Verify the re-approve worked
-        pusd_bal_after = await get_pusd_balance()
-        if pusd_bal_after < oracle.bankroll * 0.5:
+        allowance_after = await get_pusd_allowance()
+        if allowance_after < oracle.bankroll * 0.5:
             log.critical(
-                f"pUSD re-approve failed: balance still {pusd_bal_after:.2f} "
+                f"pUSD re-approve failed: allowance still {allowance_after:.2f} "
                 f"< required {oracle.bankroll * 0.5:.2f} — halting trading"
             )
             oracle.emergency_halt = True
-    log.debug(f"pUSD balance: {pusd_bal:.2f}")
+    log.debug(f"pUSD allowance: {allowance:.2f}")
 
 
 async def _check_bankroll_vs_chain(oracle: OracleBuffer) -> None:

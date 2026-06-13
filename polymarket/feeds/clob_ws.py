@@ -68,7 +68,15 @@ async def clob_ws_loop(oracle: OracleBuffer) -> None:
                 keepalive = asyncio.create_task(_keepalive(oracle))
                 try:
                     async for raw in ws:
-                        parsed = json.loads(raw)
+                        # CLOB sends plain-text keepalive frames (e.g. "PONG") that
+                        # aren't JSON — skip anything that doesn't parse.
+                        if not raw or raw[0] not in "[{":
+                            oracle.last_clob_ts = time.time()  # frame = socket alive
+                            continue
+                        try:
+                            parsed = json.loads(raw)
+                        except (json.JSONDecodeError, ValueError):
+                            continue
                         # Polymarket CLOB V2 sends a JSON ARRAY of event objects per
                         # frame (sometimes a single object). Normalize to a list.
                         events = parsed if isinstance(parsed, list) else [parsed]

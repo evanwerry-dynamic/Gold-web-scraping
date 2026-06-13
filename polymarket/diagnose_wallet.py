@@ -32,7 +32,10 @@ def diagnose():
                 "from your EOA. Find it in the Polymarket app under your profile."
             )
         elif proxy:
-            log.info("[DIAG] POLY_PROXY_ADDRESS differs from EOA — correct setup.")
+            log.info(
+                "[DIAG] POLY_PROXY_ADDRESS differs from EOA — correct setup. "
+                "Using POLY_GNOSIS_SAFE signing (MetaMask/browser wallet → Gnosis Safe)."
+            )
         else:
             log.warning("[DIAG] POLY_PROXY_ADDRESS not set — live orders will fail.")
 

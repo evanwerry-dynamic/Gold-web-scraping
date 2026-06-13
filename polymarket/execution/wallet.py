@@ -117,7 +117,6 @@ def get_clob_client():
 
     from py_clob_client_v2 import ClobClient, ApiCreds
     from py_clob_client_v2.order_builder.builder import SignatureTypeV2
-
     creds = ApiCreds(
         api_key=api_key or "",
         api_secret=api_secret or "",
@@ -125,17 +124,19 @@ def get_clob_client():
     )
 
     if proxy_wallet:
-        # POLY_PROXY: orders submitted as the deposit wallet, signed by the EOA key.
-        # funder = proxy wallet address (maker in every order).
+        # POLY_GNOSIS_SAFE: Polymarket creates a Gnosis Safe wallet for MetaMask/browser
+        # wallet users. The Safe address is the maker/funder; the EOA private key signs
+        # orders on behalf of the Safe. POLY_PROXY (type 1) is only for Magic Link accounts
+        # that use Polymarket's EIP-1167 minimal proxy wallets.
         _client = ClobClient(
             host="https://clob.polymarket.com",
             chain_id=137,
             key=pk,
             creds=creds,
-            signature_type=int(SignatureTypeV2.POLY_PROXY),
+            signature_type=int(SignatureTypeV2.POLY_GNOSIS_SAFE),
             funder=proxy_wallet,
         )
-        log.info(f"CLOB client initialized — POLY_PROXY mode (funder={proxy_wallet[:10]}…)")
+        log.info(f"CLOB client initialized — POLY_GNOSIS_SAFE mode (funder={proxy_wallet[:10]}…)")
     else:
         # Fall back to EOA signing. Works for paper trading and API reads;
         # live order submission requires POLY_PROXY_ADDRESS to be set.

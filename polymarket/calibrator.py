@@ -27,9 +27,9 @@ MIN_TRADES_FOR_CALIBRATION = 20
 # Mutated at runtime by the nightly calibrator and the dashboard Tuning tab.
 LIVE_PARAMS: dict = {
     "min_delta_threshold": float(os.getenv("MIN_DELTA_THRESHOLD", "0.001")),
-    "min_edge_net": float(os.getenv("MIN_EDGE_NET", "0.07")),
-    "entry_seconds_before_close": float(os.getenv("ENTRY_SECONDS_BEFORE_CLOSE", "12")),
-    "min_order_size_usd": float(os.getenv("MIN_ORDER_SIZE_USD", "0")),
+    "min_edge_net": float(os.getenv("MIN_EDGE_NET", "0.05")),
+    "entry_seconds_before_close": float(os.getenv("ENTRY_SECONDS_BEFORE_CLOSE", "15")),
+    "min_order_size_usd": float(os.getenv("MIN_ORDER_SIZE_USD", "1.0")),
     "kelly_max_pct": float(os.getenv("KELLY_MAX_PCT", "0.05")),
 }
 

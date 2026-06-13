@@ -76,14 +76,29 @@ async def run() -> None:
 
     # Restore tuned strategy params (calibrator or dashboard Tuning tab) so
     # they survive redeploys. Out-of-range values are dropped, not clamped.
+    # Old wrong defaults are skipped so code fixes take effect without manual
+    # DB cleanup — only restore values that differ from the known bad defaults.
+    _OLD_BAD_DEFAULTS = {
+        "min_edge_net": 0.07,
+        "entry_seconds_before_close": 12.0,
+        "min_order_size_usd": 0.0,
+    }
     try:
         from polymarket.data import load_state
         from polymarket.calibrator import LIVE_PARAMS, TUNABLE_RANGES
         saved_params = load_state().get("strategy_params", {})
         for k, v in saved_params.items():
             lo, hi = TUNABLE_RANGES.get(k, (None, None))
-            if lo is not None and lo <= float(v) <= hi:
-                LIVE_PARAMS[k] = float(v)
+            if lo is None:
+                continue
+            fv = float(v)
+            if not (lo <= fv <= hi):
+                continue
+            # Skip if this matches a known-wrong old default — let the new code default win
+            if _OLD_BAD_DEFAULTS.get(k) == fv:
+                log.info(f"Skipping stale param {k}={fv} (old wrong default) — using new default")
+                continue
+            LIVE_PARAMS[k] = fv
         if saved_params:
             log.info(f"Strategy params restored: {LIVE_PARAMS}")
     except Exception as exc:

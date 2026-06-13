@@ -294,7 +294,7 @@ async def _submit_to_clob(intent: dict, order_id: str) -> dict:
     try:
         from py_clob_client_v2.clob_types import (
             MarketOrderArgs,
-            LimitOrderArgs,
+            OrderArgsV2,
             OrderType,
         )
 
@@ -302,29 +302,34 @@ async def _submit_to_clob(intent: dict, order_id: str) -> dict:
             args = MarketOrderArgs(
                 token_id=token_id,
                 amount=intent["dollar_size"],
+                side="BUY",
             )
             signed = await loop.run_in_executor(
                 None, client.create_market_order, args
             )
-            otype = OrderType.FOK
+            resp = await loop.run_in_executor(
+                None, lambda: client.post_order(signed, OrderType.FOK)
+            )
         else:
-            args = LimitOrderArgs(
-                price=intent["price"],
-                size=intent.get("shares", intent["dollar_size"] / max(intent["price"], 0.01)),
+            size = intent.get("shares", intent["dollar_size"] / max(intent["price"], 0.01))
+            args = OrderArgsV2(
                 token_id=token_id,
+                price=intent["price"],
+                size=size,
+                side="BUY",
             )
             signed = await loop.run_in_executor(None, client.create_order, args)
-            otype = OrderType.POST_ONLY if order_type_str == "POST_ONLY" else OrderType.GTC
+            post_only = (order_type_str == "POST_ONLY")
+            resp = await loop.run_in_executor(
+                None, lambda: client.post_order(signed, OrderType.GTC, post_only=post_only)
+            )
 
-        resp = await loop.run_in_executor(
-            None, lambda: client.post_order(signed, otype)
-        )
         return resp or {"orderID": order_id, "status": "submitted"}
 
-    except (ImportError, AttributeError):
+    except (ImportError, AttributeError) as exc:
         raise RuntimeError(
-            "py_clob_client_v2 CLOB types not found — "
-            "check py_clob_client_v2 installation."
+            f"py_clob_client_v2 CLOB types not found — "
+            f"check py_clob_client_v2 installation. ({exc})"
         )
 
 

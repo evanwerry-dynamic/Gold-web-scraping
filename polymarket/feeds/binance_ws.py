@@ -37,9 +37,25 @@ async def binance_ws_loop(oracle: OracleBuffer) -> None:
     Launches Kraken + CoinGecko fallbacks as managed tasks — cancelled cleanly
     on exit so _guard restarts don't leak orphaned tasks.
     """
-    log.info("BTC price feed starting (Binance primary, Kraken fallback, CoinGecko last resort)")
+    # Binance geo-blocks many cloud regions (HTTP 451). When DISABLE_BINANCE is
+    # set, skip it entirely and run Kraken as the permanent primary feed — this
+    # stops the connect→451→fallback→recover thrash and gives a stable feed.
+    disable_binance = os.getenv("DISABLE_BINANCE", "").lower() in ("1", "true", "yes")
+
     kraken_task = asyncio.create_task(_kraken_ws_loop(oracle))
     coingecko_task = asyncio.create_task(_coingecko_rest_loop(oracle))
+
+    if disable_binance:
+        log.info("BTC price feed starting (Binance DISABLED — Kraken primary, CoinGecko last resort)")
+        oracle.last_binance_ts = 0.0  # force-stale so Kraken activates immediately
+        try:
+            await asyncio.gather(kraken_task, coingecko_task)
+        finally:
+            kraken_task.cancel()
+            coingecko_task.cancel()
+        return
+
+    log.info("BTC price feed starting (Binance primary, Kraken fallback, CoinGecko last resort)")
 
     try:
         while True:

@@ -42,14 +42,38 @@ def diagnose():
     except Exception as exc:
         log.warning(f"[DIAG] Wallet diagnostic failed: {exc!r}")
 
-    # Try to derive the API key address via L1 headers (no order submission needed)
+    # Derive the API key from the current private key and compare against the
+    # configured CLOB_API_KEY. A mismatch is the usual cause of "maker address
+    # not allowed" after rotating POLYGON_PRIVATE_KEY.
     try:
-        from py_clob_client_v2 import ClobClient, ApiCreds
+        from py_clob_client_v2 import ClobClient
         client_l1 = ClobClient(
             host="https://clob.polymarket.com",
             chain_id=137,
             key=pk,
         )
         log.info(f"[DIAG] ClobClient L1 address: {client_l1.get_address()}")
+        derived = client_l1.create_or_derive_api_key()
+        configured = os.getenv("CLOB_API_KEY", "")
+        log.info(f"[DIAG] API key derived from PK: {derived.api_key}")
+        if configured and configured != derived.api_key:
+            log.critical(
+                f"[DIAG] CLOB_API_KEY env var ({configured[:8]}…) does NOT match the key "
+                f"derived from POLYGON_PRIVATE_KEY ({derived.api_key[:8]}…). This causes "
+                "'maker address not allowed'. The bot auto-uses the derived creds, but you "
+                "should update the Railway env vars:\n"
+                f"  CLOB_API_KEY={derived.api_key}\n"
+                f"  CLOB_SECRET={derived.api_secret}\n"
+                f"  CLOB_PASS_PHRASE={derived.api_passphrase}"
+            )
+        elif not configured:
+            log.info(
+                "[DIAG] CLOB_API_KEY not set — bot will auto-derive. To pin it, set:\n"
+                f"  CLOB_API_KEY={derived.api_key}\n"
+                f"  CLOB_SECRET={derived.api_secret}\n"
+                f"  CLOB_PASS_PHRASE={derived.api_passphrase}"
+            )
+        else:
+            log.info("[DIAG] CLOB_API_KEY matches the derived key — creds are correct.")
     except Exception as exc:
-        log.warning(f"[DIAG] L1 client check failed: {exc!r}")
+        log.warning(f"[DIAG] L1 client / API key check failed: {exc!r}")

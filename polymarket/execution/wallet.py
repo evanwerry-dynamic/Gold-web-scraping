@@ -117,11 +117,32 @@ def get_clob_client():
 
     from py_clob_client_v2 import ClobClient, ApiCreds
     from py_clob_client_v2.order_builder.builder import SignatureTypeV2
-    creds = ApiCreds(
-        api_key=api_key or "",
-        api_secret=api_secret or "",
-        api_passphrase=api_pass or "",
-    )
+
+    # API creds (L2 auth) MUST be derived from the same private key that signs
+    # orders. If POLYGON_PRIVATE_KEY changes but stale CLOB_API_KEY env vars
+    # remain, the CLOB rejects orders with "maker address not allowed" because
+    # the API key authenticates a different account than the order's maker.
+    # Always derive fresh creds from the current key so the two can't drift.
+    creds = None
+    try:
+        l1 = ClobClient(host="https://clob.polymarket.com", chain_id=137, key=pk)
+        creds = l1.create_or_derive_api_key()
+        log.info(f"CLOB API creds derived from current key (api_key={creds.api_key[:8]}…)")
+        if api_key and api_key != creds.api_key:
+            log.warning(
+                f"CLOB_API_KEY env var ({api_key[:8]}…) does NOT match the key derived "
+                f"from POLYGON_PRIVATE_KEY ({creds.api_key[:8]}…) — using the derived "
+                "creds. Update the Railway env vars to the derived values to silence this."
+            )
+    except Exception as exc:
+        log.warning(f"API key derivation failed ({exc!r}) — falling back to env creds")
+
+    if creds is None:
+        creds = ApiCreds(
+            api_key=api_key or "",
+            api_secret=api_secret or "",
+            api_passphrase=api_pass or "",
+        )
 
     if proxy_wallet:
         # POLY_GNOSIS_SAFE: Polymarket creates a Gnosis Safe wallet for MetaMask/browser

@@ -143,19 +143,31 @@ def _update_orderbook(oracle: OracleBuffer, msg: dict) -> None:
     # signal loop compute negative edge on every evaluation and never trade.
     # M5: last_book_update_ts only set when real (non-dust) prices actually land —
     # prevents maker_loop stale check from firing every 10s on thin markets.
+    #
+    # ORDER-INDEPENDENT PARSING: Polymarket's WS sends bid/ask arrays in an order
+    # that contradicts its own docs and has flipped historically (see
+    # Polymarket/rs-clob-client #330 — bids arrive ascending, asks descending).
+    # Indexing [0] grabbed the WORST level (deep dust), which the dust filter then
+    # discarded, leaving yes_bid/yes_ask frozen at their defaults and every maker
+    # quote crossing the real book. Compute best = max(bids)/min(asks) so we never
+    # depend on the array order.
     if bids:
-        best_bid = float(bids[0]["price"])
+        bid_sorted = sorted(bids, key=lambda b: float(b["price"]), reverse=True)
+        best_bid = float(bid_sorted[0]["price"])
+        bdepth = sum(float(b["size"]) for b in bid_sorted[:3])  # 3 best (highest) levels
         if best_bid >= 0.02:
             if asset_id == m.yes_token_id:
                 m.yes_bid = best_bid
+                m.bid_depth = bdepth
                 m.last_book_update_ts = time.time()
             elif asset_id == m.no_token_id:
                 m.no_bid = best_bid
                 m.last_book_update_ts = time.time()
 
     if asks:
-        best_ask = float(asks[0]["price"])
-        depth = sum(float(a["size"]) for a in asks[:3])
+        ask_sorted = sorted(asks, key=lambda a: float(a["price"]))
+        best_ask = float(ask_sorted[0]["price"])
+        depth = sum(float(a["size"]) for a in ask_sorted[:3])  # 3 best (lowest) levels
         if best_ask <= 0.98:
             if asset_id == m.yes_token_id:
                 m.yes_ask = best_ask

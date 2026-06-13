@@ -112,18 +112,44 @@ def get_clob_client():
         raise EnvironmentError("POLYGON_PRIVATE_KEY not set — cannot initialize wallet")
 
     from py_clob_client_v2 import ClobClient, ApiCreds
+    from py_clob_client_v2.order_builder.builder import SignatureTypeV2
     creds = ApiCreds(
         api_key=api_key or "",
         api_secret=api_secret or "",
         api_passphrase=api_pass or "",
     )
-    _client = ClobClient(
-        host="https://clob.polymarket.com",
-        chain_id=137,
-        key=pk,
-        creds=creds,
-    )
-    log.info("CLOB client initialized (py_clob_client_v2)")
+    # POLY_PROXY_ADDRESS: the Gnosis Safe deposit wallet created by Polymarket for
+    # MetaMask/browser wallet users. Required for CLOB V2 order submission.
+    proxy_wallet = os.getenv("POLY_PROXY_ADDRESS", "").strip() or None
+
+    if proxy_wallet:
+        # POLY_GNOSIS_SAFE: Polymarket creates a Gnosis Safe wallet for MetaMask/browser
+        # wallet users. The Safe address is the maker/funder; the EOA private key signs
+        # orders on behalf of the Safe. POLY_PROXY (type 1) is only for Magic Link accounts
+        # that use Polymarket's EIP-1167 minimal proxy wallets.
+        _client = ClobClient(
+            host="https://clob.polymarket.com",
+            chain_id=137,
+            key=pk,
+            creds=creds,
+            signature_type=int(SignatureTypeV2.POLY_GNOSIS_SAFE),
+            funder=proxy_wallet,
+        )
+        log.info(f"CLOB client initialized — POLY_GNOSIS_SAFE mode (funder={proxy_wallet[:10]}…)")
+    else:
+        # Fall back to EOA signing. Works for paper trading and API reads;
+        # live order submission requires POLY_PROXY_ADDRESS to be set.
+        _client = ClobClient(
+            host="https://clob.polymarket.com",
+            chain_id=137,
+            key=pk,
+            creds=creds,
+        )
+        log.warning(
+            "CLOB client: POLY_PROXY_ADDRESS not set — using EOA signing. "
+            "Live order submission will fail with 'maker address not allowed'. "
+            "Set POLY_PROXY_ADDRESS to your Polymarket deposit wallet address."
+        )
 
     return _client
 

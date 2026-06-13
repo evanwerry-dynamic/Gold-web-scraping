@@ -147,6 +147,10 @@ async def run() -> None:
     else:
         log.info("PostgreSQL persistence active — state survives redeploys")
 
+    if not paper:
+        from polymarket.diagnose_wallet import diagnose
+        diagnose()
+
     mode = "PAPER TRADING" if paper else "LIVE TRADING"
     log.info(f"Mad Scientist starting in {mode} mode")
     log.info(f"   Bankroll: ${oracle.bankroll:.2f} pUSD")

@@ -107,10 +107,14 @@ def get_clob_client():
     api_key = os.getenv("CLOB_API_KEY")
     api_secret = os.getenv("CLOB_SECRET")
     api_pass = os.getenv("CLOB_PASS_PHRASE")
-    # POLY_PROXY_ADDRESS: the deposit wallet address created by polymarket.com
-    # for your EOA. Required for CLOB V2 order submission. If not set, defaults
-    # to EOA signing which is rejected ("maker address not allowed").
-    proxy_wallet = os.getenv("POLY_PROXY_ADDRESS", "").strip() or None
+    # POLY_PROXY_ADDRESS (or POLY_ADDRESS fallback): the API proxy address shown
+    # in your Polymarket profile. Required for CLOB V2 order submission.
+    # If not set, falls back to EOA signing which is rejected ("maker address not allowed").
+    proxy_wallet = (
+        os.getenv("POLY_PROXY_ADDRESS", "").strip()
+        or os.getenv("POLY_ADDRESS", "").strip()
+        or None
+    )
 
     if not pk:
         raise EnvironmentError("POLYGON_PRIVATE_KEY not set — cannot initialize wallet")
@@ -193,22 +197,26 @@ async def get_matic_balance() -> float:
 
 
 async def get_pusd_balance() -> float:
-    """Return pUSD balance (6 decimals)."""
+    """Return pUSD balance for the active trading address (proxy or EOA)."""
     try:
         from web3 import Web3
         w3 = get_web3()
         pk = os.getenv("POLYGON_PRIVATE_KEY", "")
         if not pk:
             return 0.0
+        proxy = (
+            os.getenv("POLY_PROXY_ADDRESS", "").strip()
+            or os.getenv("POLY_ADDRESS", "").strip()
+        )
         acct = w3.eth.account.from_key(pk)
-        # Minimal ERC-20 ABI for balanceOf
+        check_addr = proxy if proxy else acct.address
         abi = [{"inputs": [{"name": "account", "type": "address"}],
                 "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}],
                 "stateMutability": "view", "type": "function"}]
         contract = w3.eth.contract(
             address=Web3.to_checksum_address(PUSD_ADDRESS), abi=abi
         )
-        raw = contract.functions.balanceOf(acct.address).call()
+        raw = contract.functions.balanceOf(Web3.to_checksum_address(check_addr)).call()
         return raw / 1e6  # 6 decimals
     except Exception as exc:
         log.warning(f"pUSD balance check failed: {exc!r}")
@@ -216,17 +224,19 @@ async def get_pusd_balance() -> float:
 
 
 async def get_pusd_allowance() -> float:
-    """Return pUSD spending allowance granted to CTF Exchange V2 (6 decimals).
-    L1: check allowance, not balance, for the approve guard in sanity_loop.
-    """
+    """Return pUSD spending allowance granted to CTF Exchange V2 for the active trading address."""
     try:
         from web3 import Web3
         w3 = get_web3()
         pk = os.getenv("POLYGON_PRIVATE_KEY", "")
         if not pk:
             return 0.0
+        proxy = (
+            os.getenv("POLY_PROXY_ADDRESS", "").strip()
+            or os.getenv("POLY_ADDRESS", "").strip()
+        )
         acct = w3.eth.account.from_key(pk)
-        # Minimal ERC-20 ABI for allowance
+        check_addr = proxy if proxy else acct.address
         abi = [{"inputs": [{"name": "owner", "type": "address"},
                             {"name": "spender", "type": "address"}],
                 "name": "allowance", "outputs": [{"name": "", "type": "uint256"}],
@@ -235,7 +245,8 @@ async def get_pusd_allowance() -> float:
             address=Web3.to_checksum_address(PUSD_ADDRESS), abi=abi
         )
         raw = contract.functions.allowance(
-            acct.address, Web3.to_checksum_address(CTF_EXCHANGE_V2)
+            Web3.to_checksum_address(check_addr),
+            Web3.to_checksum_address(CTF_EXCHANGE_V2)
         ).call()
         return raw / 1e6  # 6 decimals
     except Exception as exc:

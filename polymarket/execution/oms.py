@@ -87,10 +87,11 @@ async def _process_order(
         log.warning(f"[OMS] Discarding stale {intent.get('strategy')} order ({age:.1f}s old)")
         return
 
-    # Deduplicate orders by market_id + strategy + side.
-    # Side must be included so that arb bundles (YES + NO on same market)
-    # and maker pairs (BUY bid + SELL ask) each get through as distinct orders.
-    key = f"{intent.get('market_id')}-{intent.get('strategy')}-{intent.get('side', '')}"
+    # Deduplicate orders by market_id + strategy + side + token.
+    # Token suffix required for Strategy B: both maker quotes use side="BUY" but
+    # on different tokens (YES bid vs NO bid) — without it the second is silently dropped.
+    token_suffix = (intent.get("token_id") or "")[-6:]
+    key = f"{intent.get('market_id')}-{intent.get('strategy')}-{intent.get('side', '')}-{token_suffix}"
     if key in _pending_market_keys:
         log.debug(f"[OMS] Skipping duplicate order key: {key}")
         return

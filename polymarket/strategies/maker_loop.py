@@ -22,7 +22,7 @@ REQUOTE_INTERVAL = 5.0      # seconds between quote refreshes
 INFORMED_WINDOW_SECS = 30   # pull quotes this many seconds before window close
 IMBALANCE_THRESHOLD = 0.70  # pull asks if bid_qty / total > this
 QUOTE_SPREAD = 0.02         # quote ±1¢ from mid
-QUOTE_PCT = 0.005           # each quote side = 0.5% of bankroll
+QUOTE_PCT = 0.05            # each quote side = 5% of bankroll (min viable at $20)
 MIN_VIABLE_QUOTE = 1.0      # skip quoting entirely below this (exchange min order)
 
 
@@ -92,9 +92,9 @@ async def maker_loop(
         # the minimum viable order size rather than oversize.
         quote_size = oracle.bankroll * QUOTE_PCT
         if quote_size < MIN_VIABLE_QUOTE:
-            log.debug(
+            log.info(
                 f"[B] Bankroll ${oracle.bankroll:.2f} too small for maker quotes "
-                f"(0.5% = ${quote_size:.2f} < ${MIN_VIABLE_QUOTE}) — dormant"
+                f"(5% = ${quote_size:.2f} < ${MIN_VIABLE_QUOTE:.2f} min) — dormant"
             )
             continue
 

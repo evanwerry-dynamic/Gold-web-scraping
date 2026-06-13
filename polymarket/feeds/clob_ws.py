@@ -134,22 +134,24 @@ def _update_orderbook(oracle: OracleBuffer, msg: dict) -> None:
     if not bids and not asks:
         return
 
-    # H6: update last_clob_ts on real book data
+    # H6: update last_clob_ts on real book data (dust-only messages still count as alive)
     oracle.last_clob_ts = time.time()
-    # M5: track when we last got a book update
-    m.last_book_update_ts = time.time()
 
     # Only update each side when data is actually present — never write 0 for missing bids.
     # Ignore dust orders at extreme prices (bid <0.02, ask >0.98): these are empty-book
     # placeholders that remain when no real orders exist. Keeping them would make the
     # signal loop compute negative edge on every evaluation and never trade.
+    # M5: last_book_update_ts only set when real (non-dust) prices actually land —
+    # prevents maker_loop stale check from firing every 10s on thin markets.
     if bids:
         best_bid = float(bids[0]["price"])
         if best_bid >= 0.02:
             if asset_id == m.yes_token_id:
                 m.yes_bid = best_bid
+                m.last_book_update_ts = time.time()
             elif asset_id == m.no_token_id:
                 m.no_bid = best_bid
+                m.last_book_update_ts = time.time()
 
     if asks:
         best_ask = float(asks[0]["price"])
@@ -158,8 +160,10 @@ def _update_orderbook(oracle: OracleBuffer, msg: dict) -> None:
             if asset_id == m.yes_token_id:
                 m.yes_ask = best_ask
                 m.ask_depth = depth
+                m.last_book_update_ts = time.time()
             elif asset_id == m.no_token_id:
                 m.no_ask = best_ask
+                m.last_book_update_ts = time.time()
 
 
 def _on_trade(oracle: OracleBuffer, msg: dict) -> None:

@@ -151,12 +151,17 @@ async def run() -> None:
         except Exception as exc:
             log.warning(f"P&L bootstrap failed: {exc!r}")
 
-    # Use INITIAL_BANKROLL env var as the authoritative starting point.
-    # Never use oracle.bankroll here — it may be restored from a previous session.
+    # Use INITIAL_BANKROLL env var as the authoritative starting point for total-loss calc.
     _initial = float(os.getenv("INITIAL_BANKROLL", str(oracle.bankroll)))
     risk_mgr = RiskManager(bankroll=_initial)
     # Sync peak to current (may be above initial if bot has profited)
     risk_mgr.peak = max(_initial, oracle.bankroll)
+    # Daily/monthly limits must be measured from the CURRENT bankroll, not the
+    # all-time initial deposit. After a losing session the restored bankroll will
+    # be below INITIAL_BANKROLL, which would immediately trip the 5% daily limit
+    # and block all trading on the next redeploy.
+    risk_mgr.daily_start = oracle.bankroll
+    risk_mgr.monthly_start = oracle.bankroll
     order_queue: asyncio.Queue = asyncio.Queue()
 
     # Warn clearly if running without a database — Railway redeploys wipe the

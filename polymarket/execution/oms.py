@@ -130,21 +130,24 @@ async def _process_order_inner(
             await _paper_fill(intent, order_id, oracle, risk_mgr, is_momentum)
             return
 
-        # Live trading — enforce Polymarket's 5-share minimum before hitting the CLOB
-        EXCHANGE_MIN_SHARES = 5.0
-        shares = intent.get("shares") or (
-            intent.get("dollar_size", 0) / max(intent.get("price", 1.0), 0.01)
-        )
-        if shares < EXCHANGE_MIN_SHARES:
-            min_usd = EXCHANGE_MIN_SHARES * intent.get("price", 1.0)
-            log.info(
-                f"[OMS] Order skipped — {shares:.2f} shares < {EXCHANGE_MIN_SHARES} exchange "
-                f"minimum (need ${min_usd:.2f}, got ${intent.get('dollar_size', 0):.2f}) "
-                f"— deposit more funds or increase Maker Quote Size on Tuning tab"
+        # Live trading — enforce Polymarket's 5-share minimum for LIMIT orders.
+        # FOK market orders use dollar amount (different exchange minimum applies).
+        order_type_str = intent.get("order_type", "GTC")
+        if order_type_str != "FOK":
+            EXCHANGE_MIN_SHARES = 5.0
+            shares = intent.get("shares") or (
+                intent.get("dollar_size", 0) / max(intent.get("price", 1.0), 0.01)
             )
-            if is_momentum:
-                oracle.strategy_phase = "HOLD"
-            return
+            if shares < EXCHANGE_MIN_SHARES:
+                min_usd = EXCHANGE_MIN_SHARES * intent.get("price", 1.0)
+                log.info(
+                    f"[OMS] Limit order skipped — {shares:.2f} shares < {EXCHANGE_MIN_SHARES} "
+                    f"exchange minimum (need ${min_usd:.2f}, got ${intent.get('dollar_size', 0):.2f}) "
+                    f"— raise Maker Quote Size on Tuning tab or deposit more funds"
+                )
+                if is_momentum:
+                    oracle.strategy_phase = "HOLD"
+                return
 
         try:
             resp = await _submit_to_clob(intent, order_id)

@@ -82,7 +82,7 @@ async def _broadcast_pnl(oracle: OracleBuffer) -> None:
 async def _broadcast_health(oracle: OracleBuffer) -> None:
     now = time.time()
     data: dict = {
-        "ws_binance": (now - oracle.last_binance_ts) < 45,
+        "ws_binance": (now - oracle.last_price_ts) < 45,  # price-feed health (any source)
         "ws_clob": (now - oracle.last_clob_ts) < 60,
         "open_positions": len(oracle.open_positions),
         "strategy_phase": oracle.strategy_phase,

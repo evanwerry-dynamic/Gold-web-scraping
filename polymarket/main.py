@@ -101,6 +101,31 @@ async def run() -> None:
             LIVE_PARAMS[k] = fv
         if saved_params:
             log.info(f"Strategy params restored: {LIVE_PARAMS}")
+
+        # Explicit env vars always win over persisted values — lets you pin a
+        # parameter from Railway (e.g. MIN_ORDER_SIZE_USD=1) regardless of what
+        # was previously saved via the Tuning tab. Leave a var unset to keep the
+        # persisted/tuned value.
+        _PARAM_ENV = {
+            "min_delta_threshold": "MIN_DELTA_THRESHOLD",
+            "min_edge_net": "MIN_EDGE_NET",
+            "entry_seconds_before_close": "ENTRY_SECONDS_BEFORE_CLOSE",
+            "min_order_size_usd": "MIN_ORDER_SIZE_USD",
+            "kelly_max_pct": "KELLY_MAX_PCT",
+            "maker_quote_pct": "MAKER_QUOTE_PCT",
+        }
+        for param, env_name in _PARAM_ENV.items():
+            raw = os.getenv(env_name)
+            if raw is None or raw.strip() == "":
+                continue
+            try:
+                fv = float(raw)
+            except ValueError:
+                continue
+            lo, hi = TUNABLE_RANGES.get(param, (None, None))
+            if lo is not None and lo <= fv <= hi:
+                LIVE_PARAMS[param] = fv
+                log.info(f"Param {param} pinned by env {env_name}={fv} (overrides persisted)")
     except Exception as exc:
         log.warning(f"Strategy param restore failed: {exc!r}")
 

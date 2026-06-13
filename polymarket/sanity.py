@@ -161,12 +161,14 @@ async def _check_bankroll_vs_chain(oracle: OracleBuffer) -> None:
 
 def _check_ws_freshness(oracle: OracleBuffer) -> None:
     now = time.time()
-    binance_age = now - oracle.last_binance_ts
+    # Use last_price_ts (any source) — a stale Binance feed is fine as long as
+    # Kraken/CoinGecko are supplying price. Only alert if NO source has data.
+    price_age = now - oracle.last_price_ts
     clob_age = now - oracle.last_clob_ts
 
-    if binance_age > WS_STALE_THRESHOLD:
+    if price_age > WS_STALE_THRESHOLD:
         log.critical(
-            f"Binance WS stale: no data for {binance_age:.0f}s — price data unreliable"
+            f"Price feed stale: no data from any source for {price_age:.0f}s — price data unreliable"
         )
         # Note: do NOT set emergency_halt here — the WS reconnect loop handles recovery
         # automatically. sanity_loop will clear the alert on next pass when fresh again.

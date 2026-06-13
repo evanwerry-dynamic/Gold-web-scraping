@@ -47,7 +47,9 @@ async def binance_ws_loop(oracle: OracleBuffer) -> None:
 
     if disable_binance:
         log.info("BTC price feed starting (Binance DISABLED — Kraken primary, CoinGecko last resort)")
-        oracle.last_binance_ts = 0.0  # force-stale so Kraken activates immediately
+        # last_binance_ts is left stale (never updated, since the Binance task
+        # never runs) — that's exactly what keeps the Kraken loop permanently
+        # active without flapping.
         try:
             await asyncio.gather(kraken_task, coingecko_task)
         finally:
@@ -75,7 +77,9 @@ async def binance_ws_loop(oracle: OracleBuffer) -> None:
                         price = float(k["c"])
                         oracle.btc_price = price
                         oracle.vol_estimator.update(price)
-                        oracle.last_binance_ts = time.time()
+                        now_ts = time.time()
+                        oracle.last_binance_ts = now_ts  # Binance-specific health
+                        oracle.last_price_ts = now_ts    # any-source freshness
                         oracle.price_ready.set()
                         oracle.active_price_source = "binance"  # M12
 
@@ -135,7 +139,11 @@ async def _kraken_ws_loop(oracle: OracleBuffer) -> None:
                         continue
 
                     oracle.btc_price = price
-                    oracle.last_binance_ts = time.time()
+                    # Write last_price_ts ONLY — never last_binance_ts. Writing
+                    # the Binance field here is what made the loop think "Binance
+                    # recovered" after a single Kraken tick, causing the
+                    # connect→suppress→disconnect flapping.
+                    oracle.last_price_ts = time.time()
                     oracle.price_ready.set()
                     oracle.active_price_source = "kraken"  # M12
 
@@ -165,7 +173,8 @@ async def _coingecko_rest_loop(oracle: OracleBuffer) -> None:
     _last_vol_ts: float = 0.0
     while True:
         await asyncio.sleep(3)
-        if time.time() - oracle.last_binance_ts < KRAKEN_GRACE:
+        # Stay dormant while ANY source (Binance or Kraken) is feeding price.
+        if time.time() - oracle.last_price_ts < KRAKEN_GRACE:
             continue
         try:
             loop = asyncio.get_running_loop()
@@ -175,7 +184,7 @@ async def _coingecko_rest_loop(oracle: OracleBuffer) -> None:
             )
             price = float(resp["bitcoin"]["usd"])
             oracle.btc_price = price
-            oracle.last_binance_ts = time.time()
+            oracle.last_price_ts = time.time()  # any-source freshness, not Binance
             oracle.price_ready.set()
             oracle.active_price_source = "coingecko"  # M12
             # M3: throttle vol_estimator to 1s cadence

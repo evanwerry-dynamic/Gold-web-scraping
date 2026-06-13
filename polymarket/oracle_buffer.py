@@ -94,7 +94,12 @@ class OracleBuffer:
     bankroll_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     # WebSocket freshness (last real data message timestamp)
+    # last_binance_ts: Binance-specific — used ONLY to decide if Binance is alive
+    #   and whether the Kraken fallback should activate/suppress.
+    # last_price_ts: ANY price source (Binance/Kraken/CoinGecko) — used for
+    #   "do we have a BTC price at all" freshness checks and health indicators.
     last_binance_ts: float = field(default_factory=time.time)
+    last_price_ts: float = field(default_factory=time.time)
     last_clob_ts: float = field(default_factory=time.time)
     last_clob_connected_ts: float = field(default_factory=time.time)  # H6: keepalive ts
 

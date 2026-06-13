@@ -107,23 +107,49 @@ def get_clob_client():
     api_key = os.getenv("CLOB_API_KEY")
     api_secret = os.getenv("CLOB_SECRET")
     api_pass = os.getenv("CLOB_PASS_PHRASE")
+    # POLY_PROXY_ADDRESS: the deposit wallet address created by polymarket.com
+    # for your EOA. Required for CLOB V2 order submission. If not set, defaults
+    # to EOA signing which is rejected ("maker address not allowed").
+    proxy_wallet = os.getenv("POLY_PROXY_ADDRESS", "").strip() or None
 
     if not pk:
         raise EnvironmentError("POLYGON_PRIVATE_KEY not set — cannot initialize wallet")
 
     from py_clob_client_v2 import ClobClient, ApiCreds
+    from py_clob_client_v2.order_builder.builder import SignatureTypeV2
+
     creds = ApiCreds(
         api_key=api_key or "",
         api_secret=api_secret or "",
         api_passphrase=api_pass or "",
     )
-    _client = ClobClient(
-        host="https://clob.polymarket.com",
-        chain_id=137,
-        key=pk,
-        creds=creds,
-    )
-    log.info("CLOB client initialized (py_clob_client_v2)")
+
+    if proxy_wallet:
+        # POLY_PROXY: orders submitted as the deposit wallet, signed by the EOA key.
+        # funder = proxy wallet address (maker in every order).
+        _client = ClobClient(
+            host="https://clob.polymarket.com",
+            chain_id=137,
+            key=pk,
+            creds=creds,
+            signature_type=int(SignatureTypeV2.POLY_PROXY),
+            funder=proxy_wallet,
+        )
+        log.info(f"CLOB client initialized — POLY_PROXY mode (funder={proxy_wallet[:10]}…)")
+    else:
+        # Fall back to EOA signing. Works for paper trading and API reads;
+        # live order submission requires POLY_PROXY_ADDRESS to be set.
+        _client = ClobClient(
+            host="https://clob.polymarket.com",
+            chain_id=137,
+            key=pk,
+            creds=creds,
+        )
+        log.warning(
+            "CLOB client: POLY_PROXY_ADDRESS not set — using EOA signing. "
+            "Live order submission will fail with 'maker address not allowed'. "
+            "Set POLY_PROXY_ADDRESS to your Polymarket deposit wallet address."
+        )
 
     return _client
 

@@ -40,7 +40,7 @@ async def _guard(factory: Callable[[], Awaitable], name: str) -> None:
 async def run() -> None:
     from polymarket.oracle_buffer import OracleBuffer
     from polymarket.risk import RiskManager
-    from polymarket.persist import restore_state, persist_loop
+    from polymarket.persist import restore_state, persist_loop, startup_position_sync
     from polymarket.feeds.binance_ws import binance_ws_loop
     from polymarket.feeds.clob_ws import clob_ws_loop
     from polymarket.feeds.chainlink_rtds import chainlink_rtds_loop
@@ -65,6 +65,10 @@ async def run() -> None:
 
     oracle = OracleBuffer(bankroll=initial_bankroll, paper_trading=paper)
     restore_state(oracle)
+
+    # One-time startup sync: inject any on-chain positions (ghosts, pre-bot trades)
+    # that aren't in the persisted state so redeem_loop can handle them immediately.
+    await startup_position_sync(oracle)
 
     # If restore loaded bankroll=0 (zero from a bad DB row), reset to initial
     if oracle.bankroll <= 0:

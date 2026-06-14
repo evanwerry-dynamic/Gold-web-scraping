@@ -32,6 +32,8 @@ LIVE_PARAMS: dict = {
     "min_order_size_usd": float(os.getenv("MIN_ORDER_SIZE_USD", "1.0")),
     "kelly_max_pct": float(os.getenv("KELLY_MAX_PCT", "0.05")),
     "maker_quote_pct": float(os.getenv("MAKER_QUOTE_PCT", "0.06")),
+    "maker_half_spread": float(os.getenv("MAKER_HALF_SPREAD", "0.015")),
+    "maker_inventory_skew": float(os.getenv("MAKER_INVENTORY_SKEW", "0.06")),
 }
 
 # H5: valid ranges for calibrator parameters (Claude may only adjust these three)
@@ -47,6 +49,8 @@ TUNABLE_RANGES = {
     "min_order_size_usd": (0.0, 100.0),
     "kelly_max_pct": (0.001, 0.10),
     "maker_quote_pct": (0.01, 0.25),
+    "maker_half_spread": (0.005, 0.10),
+    "maker_inventory_skew": (0.0, 0.20),
 }
 
 

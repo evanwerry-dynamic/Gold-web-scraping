@@ -1,34 +1,159 @@
 """
-Strategy B: Market making with maker rebates.
+Strategy B: Fair-value market making with inventory skew.
 
-Posts resting limit orders on both sides of the BTC 5-min market.
-0% maker fee + 20% maker rebate (crypto) = positive carry even at flat P&L.
+Posts resting limit orders on both sides of the BTC 5-min market, priced around
+the bot's OWN fair value (the same window-delta model Strategy A uses) rather than
+the stale book mid. 0% maker fee + ~20% maker rebate (crypto) = positive carry
+when both sides fill, provided quotes are not adversely selected.
 
-Quote management (adverse-selection hardened):
-- Pull ALL quotes at T-60s (not T-30s) — last 60s is pure informed-flow territory
-- Delta filter: if |window_delta| > DELTA_SUPPRESS, only quote the mean-reversion
-  side. A strong up-move makes YES expensive; informed sellers dump on YES bids.
-  Only post NO bids when BTC is up, YES bids when BTC is down.
-- Min spread gate: only quote when spread > MIN_SPREAD (rebate must cover risk)
-- Pull ALL quotes (not just asks) when imbalance > IMBALANCE_THRESHOLD
-- Re-quote every REQUOTE_INTERVAL seconds to stay at the touch
+Why this beats "join the touch" (the previous approach):
+- Joining the book's best bid/ask means resting at whatever price informed flow
+  has already moved to — you are the last to know and get picked off.
+- Anchoring to fair value means you only ever bid BELOW your own estimate of
+  worth, so a fill is +EV by construction. If the book is richer than fair, you
+  simply rest deeper and don't trade — which is the correct response.
+
+Adverse-selection controls (in priority order):
+1. Pull ALL quotes in the final INFORMED_WINDOW_SECS — last minute is pure
+   informed flow on a 5-min binary; no rebate compensates for it.
+2. Pull ALL quotes when orderbook imbalance > IMBALANCE_THRESHOLD (one-sided
+   = informed pressure from one direction).
+3. Skip when the book is stale (>10s without an update).
+4. Inventory skew (Avellaneda-Stoikov reservation price): when net exposure is
+   long UP, lower the effective fair so we bid less for YES and more for NO,
+   pulling the book back toward flat. This is risk management, NOT a directional
+   bet — it always pushes toward zero inventory.
+5. Spread widens with realized volatility and time remaining: more uncertainty
+   => demand a wider edge.
+6. Per-side capture gate: only post a side if its price is at least MIN_CAPTURE
+   below that side's RESERVATION price (the inventory-adjusted fair). With flat
+   inventory the reservation equals true fair, so quotes never bid above fair.
+   When holding inventory, A-S deliberately accepts a few cents through true fair
+   on the rebalancing side to shed risk — bounded by the skew coefficient (≤6¢).
 """
 import asyncio
 import logging
+import math
 import time
 
+from polymarket.fair_value import fair_value_binary
 from polymarket.oracle_buffer import OracleBuffer
 from polymarket.risk import RiskManager
 
 log = logging.getLogger(__name__)
 
-REQUOTE_INTERVAL = 5.0      # seconds between quote refreshes
-INFORMED_WINDOW_SECS = 60   # pull ALL quotes this many seconds before close (was 30 — too late)
-MIN_SPREAD = 0.015          # only quote when spread > 1.5¢ (rebate doesn't cover tighter risk)
-IMBALANCE_THRESHOLD = 0.70  # pull ALL quotes if bid_qty / total > this (was: pull asks only)
-DELTA_SUPPRESS = 0.0005     # 0.05% — if BTC moved this much, only quote mean-reversion side
-QUOTE_PCT = 0.05            # each quote side = 5% of bankroll (min viable at $20)
-MIN_VIABLE_QUOTE = 1.0      # skip quoting entirely below this (exchange min order)
+REQUOTE_INTERVAL = 5.0       # seconds between quote refreshes
+INFORMED_WINDOW_SECS = 60    # pull ALL quotes this many seconds before close
+IMBALANCE_THRESHOLD = 0.70   # pull ALL quotes if bid_qty / total > this
+QUOTE_PCT = 0.05             # each quote side = % of bankroll
+MIN_VIABLE_QUOTE = 1.0       # skip quoting below this $ (exchange min order)
+TICK = 0.01
+
+# Pricing model constants (tunable via LIVE_PARAMS / dashboard Tuning tab)
+HALF_SPREAD_BASE = 0.015     # 1.5¢ minimum half-spread (3¢ round-trip) before vol
+VOL_SPREAD_COEF = 2.5        # widen half-spread by this × σ × √(secs_left)
+INVENTORY_SKEW_COEF = 0.06   # max ±6¢ reservation shift at full (±100% bankroll) inventory
+MIN_CAPTURE = 0.01           # require ≥1¢ edge vs fair on a side before posting it
+MAX_HALF_SPREAD = 0.10       # never quote wider than ±10¢
+
+
+def _floor_to_tick(price: float, tick: float = TICK) -> float:
+    """Round a BUY price DOWN to the tick grid so we never pay more than intended."""
+    return round(math.floor(price / tick) * tick, 2)
+
+
+def compute_maker_quotes(
+    *,
+    fair: float,
+    yes_bid: float,
+    yes_ask: float,
+    no_ask: float,
+    sigma_per_second: float,
+    secs_left: float,
+    bankroll: float,
+    inventory_up_value: float,
+    quote_size: float,
+    half_spread_base: float = HALF_SPREAD_BASE,
+    vol_spread_coef: float = VOL_SPREAD_COEF,
+    inventory_skew_coef: float = INVENTORY_SKEW_COEF,
+    min_capture: float = MIN_CAPTURE,
+    tick: float = TICK,
+) -> dict:
+    """Pure pricing core for the maker. Returns the YES/NO quote prices (or None
+    per side) plus the diagnostics that produced them. No I/O — fully unit-testable.
+
+    Args:
+        fair: P(UP) — fair value of the YES token, in (0, 1).
+        yes_bid/yes_ask/no_ask: current best book prices (for passivity clamps).
+        sigma_per_second: realized vol per second (spread widener).
+        secs_left: seconds until window close (spread widener).
+        bankroll: current bankroll (skew normaliser + sizing reference).
+        inventory_up_value: signed $ exposure toward UP (YES cost − NO cost) in
+            the active market. Positive = net long UP.
+        quote_size: $ size to post per side.
+
+    Returns:
+        {
+          "yes": {"price": float, "dollar_size": float} | None,
+          "no":  {"price": float, "dollar_size": float} | None,
+          "half_spread": float, "skew": float, "fair_eff": float,
+        }
+    """
+    # Spread widens with volatility and time-to-resolution; floored at base.
+    vol_term = vol_spread_coef * max(sigma_per_second, 0.0) * math.sqrt(max(secs_left, 0.0))
+    half_spread = min(max(half_spread_base, half_spread_base + vol_term), MAX_HALF_SPREAD)
+
+    # Inventory skew: shift the reservation price toward reducing net exposure.
+    # Long UP (positive) -> lower fair_eff -> cheaper YES bid (buy less YES),
+    # higher NO bid (buy more NO). Always pushes inventory toward flat.
+    skew_norm = max(-1.0, min(1.0, inventory_up_value / max(bankroll, 1.0)))
+    skew = inventory_skew_coef * skew_norm
+    fair_eff = max(0.02, min(0.98, fair - skew))
+
+    # YES side: buy YES at reservation − half_spread. Capture is measured vs the
+    # reservation price (fair_eff), the textbook A-S reference when holding inventory.
+    raw_yes_bid = fair_eff - half_spread
+    p_yes = _floor_to_tick(raw_yes_bid, tick)
+    p_yes = min(p_yes, round(yes_ask - tick, 2))   # stay strictly passive (post-only safe)
+    p_yes = max(0.01, min(p_yes, 0.99))
+    yes_capture = fair_eff - p_yes
+    yes_quote = (
+        {"price": p_yes, "dollar_size": quote_size}
+        if yes_capture >= min_capture else None
+    )
+
+    # NO side: selling YES at (fair_eff + half_spread) ≡ buying NO at its complement.
+    # NO reservation = 1 − fair_eff.
+    raw_no_bid = 1.0 - (fair_eff + half_spread)
+    p_no = _floor_to_tick(raw_no_bid, tick)
+    p_no = min(p_no, round(no_ask - tick, 2))       # stay strictly passive (post-only safe)
+    p_no = max(0.01, min(p_no, 0.99))
+    no_capture = (1.0 - fair_eff) - p_no
+    no_quote = (
+        {"price": p_no, "dollar_size": quote_size}
+        if no_capture >= min_capture else None
+    )
+
+    return {
+        "yes": yes_quote,
+        "no": no_quote,
+        "half_spread": half_spread,
+        "skew": skew,
+        "fair_eff": fair_eff,
+    }
+
+
+def _inventory_up_value(oracle: OracleBuffer, market_id: str) -> float:
+    """Signed $ exposure toward UP in the active market (YES cost − NO cost)."""
+    q = 0.0
+    for p in oracle.open_positions.values():
+        if p.resolved or p.market_id != market_id:
+            continue
+        if p.side in ("YES", "UP"):
+            q += p.cost_basis
+        elif p.side in ("NO", "DOWN"):
+            q -= p.cost_basis
+    return q
 
 
 async def maker_loop(
@@ -36,20 +161,32 @@ async def maker_loop(
     order_queue: asyncio.Queue,
     risk_mgr: RiskManager,
 ) -> None:
-    """Strategy B market making. Never exits."""
-    log.info("Strategy B (market making) starting — waiting for price feed...")
+    """Strategy B fair-value market making. Never exits."""
+    log.info("Strategy B (fair-value market making) starting — waiting for price feed...")
     await oracle.price_ready.wait()
     log.info("Strategy B: price feed ready, entering maker loop")
-    active_quote_ids: list[str] = []
+    quotes_active = False
+
+    async def _pull(reason: str) -> None:
+        nonlocal quotes_active
+        if quotes_active:
+            await order_queue.put({"action": "cancel_all", "strategy": "B"})
+            quotes_active = False
+            log.info(f"[B] Pulling quotes — {reason}")
 
     while True:
         await asyncio.sleep(REQUOTE_INTERVAL)
 
         if oracle.emergency_halt:
+            await _pull("emergency halt")
             continue
 
         market = oracle.active_market
         if market is None:
+            continue
+
+        # Need a meaningful vol estimate to price the spread.
+        if not oracle.vol_estimator.is_ready():
             continue
 
         secs_left = oracle.window_seconds_remaining()
@@ -57,83 +194,32 @@ async def maker_loop(
         # M5: skip quoting when orderbook data is stale (>10s without book update)
         if (market.last_book_update_ts > 0
                 and time.time() - market.last_book_update_ts > 10):
-            log.warning(
-                f"[B] Skipping quote — orderbook data stale "
-                f"({time.time() - market.last_book_update_ts:.0f}s since last update)"
-            )
+            await _pull("orderbook stale")
             continue
 
-        # Pull ALL quotes in the informed window (T-60s to close).
-        # The last 60s is pure adverse-selection territory: informed bots know
-        # BTC's direction and systematically pick off resting quotes at off-prices.
+        # 1. Pull ALL quotes in the informed-flow window (T-60s to close).
         if secs_left < INFORMED_WINDOW_SECS:
-            if active_quote_ids:
-                await order_queue.put({"action": "cancel_all", "strategy": "B"})
-                active_quote_ids.clear()
-                log.info(f"[B] T-{secs_left:.0f}s: pulling quotes (informed-flow window)")
+            await _pull(f"T-{secs_left:.0f}s informed window")
             continue
 
-        # Pull ALL quotes on extreme orderbook imbalance (heavily one-sided = informed flow).
+        # 2. Pull ALL quotes on extreme orderbook imbalance (informed pressure).
         total_depth = market.bid_depth + market.ask_depth
-        if total_depth > 0:
-            imbalance = market.bid_depth / total_depth
-        else:
-            log.debug("[B] Zero orderbook depth — skipping maker quotes")
-            imbalance = 1.0
+        imbalance = market.bid_depth / total_depth if total_depth > 0 else 1.0
         if imbalance > IMBALANCE_THRESHOLD:
-            if active_quote_ids:
-                await order_queue.put({"action": "cancel_all", "strategy": "B"})
-                active_quote_ids.clear()
-                log.info(f"[B] Imbalance {imbalance:.0%} > {IMBALANCE_THRESHOLD:.0%} — pulling all quotes")
+            await _pull(f"imbalance {imbalance:.0%}")
             continue
-
-        # Min spread gate: if spread is too tight, the maker rebate doesn't cover
-        # the directional risk of being filled on the wrong side.
-        spread = market.yes_ask - market.yes_bid
-        if spread < MIN_SPREAD:
-            log.debug(f"[B] Spread {spread:.3f} < {MIN_SPREAD:.3f} min — skip quote")
-            continue
-
-        # Delta filter: if BTC has moved decisively, only quote the mean-reversion
-        # side. Posting YES bids into a strong up-move gets adversely selected by
-        # informed sellers who know BTC is going to retrace or close up.
-        delta = oracle.window_delta()
-        post_yes = True   # bid on YES (wins if BTC closes up)
-        post_no = True    # bid on NO  (wins if BTC closes down)
-        if delta > DELTA_SUPPRESS:
-            # BTC has moved UP: YES is expensive; informed sellers will hit YES bids.
-            # Only post NO bids (buys on the underdog side for mean-reversion edge).
-            post_yes = False
-            log.debug(f"[B] δ={delta:.4%} > {DELTA_SUPPRESS:.4%}: suppressing YES bid (BTC up)")
-        elif delta < -DELTA_SUPPRESS:
-            # BTC has moved DOWN: NO is expensive; informed sellers will hit NO bids.
-            post_no = False
-            log.debug(f"[B] δ={delta:.4%} < -{DELTA_SUPPRESS:.4%}: suppressing NO bid (BTC down)")
-
-        # Join the touch: post AT the current best bid/ask so POST_ONLY orders
-        # rest as maker liquidity. Quoting at mid ± 1¢ on the fast, ~1¢-wide
-        # 5-min book put quotes on top of the opposite side and they were
-        # rejected as crossers ("invalid post-only order: order crosses book").
-        TICK = 0.01
-        bid_price = round(market.yes_bid, 2)
-        ask_price = round(market.yes_ask, 2)
-
-        # Defensive: stay strictly passive even if the book is stale/crossed —
-        # a buy must sit below the ask and a sell above the bid.
-        bid_price = min(bid_price, round(market.yes_ask - TICK, 2))
-        ask_price = max(ask_price, round(market.yes_bid + TICK, 2))
-        bid_price = max(0.01, min(bid_price, 0.99))
-        ask_price = max(0.01, min(ask_price, 0.99))
 
         allowed, reason = risk_mgr.allow_trade(oracle.bankroll)
         if not allowed:
-            log.debug(f"[B] Quote suppressed: {reason}")
+            await _pull(f"risk: {reason}")
             continue
 
-        # Read live-tunable params so the dashboard Tuning tab takes effect immediately.
+        # Live-tunable sizing/pricing params (dashboard Tuning tab + calibrator).
         from polymarket.calibrator import LIVE_PARAMS
         quote_pct = LIVE_PARAMS.get("maker_quote_pct", QUOTE_PCT)
         min_viable = LIVE_PARAMS.get("min_order_size_usd", MIN_VIABLE_QUOTE)
+        half_spread_base = LIVE_PARAMS.get("maker_half_spread", HALF_SPREAD_BASE)
+        skew_coef = LIVE_PARAMS.get("maker_inventory_skew", INVENTORY_SKEW_COEF)
 
         quote_size = oracle.bankroll * quote_pct
         if quote_size < min_viable:
@@ -141,10 +227,34 @@ async def maker_loop(
                 f"[B] Bankroll ${oracle.bankroll:.2f} too small for maker quotes "
                 f"({quote_pct*100:.0f}% = ${quote_size:.2f} < ${min_viable:.2f} min) — dormant"
             )
+            await _pull("below min size")
             continue
 
+        # Price around our OWN fair value, not the stale book mid.
+        open_price = market.window_open_price or oracle.btc_price
+        fair = fair_value_binary(
+            current_price=oracle.btc_price,
+            window_open_price=open_price,
+            sigma_per_second=oracle.vol_estimator.sigma_per_second(),
+            seconds_remaining=secs_left,
+        )
+
+        result = compute_maker_quotes(
+            fair=fair,
+            yes_bid=market.yes_bid,
+            yes_ask=market.yes_ask,
+            no_ask=market.no_ask,
+            sigma_per_second=oracle.vol_estimator.sigma_per_second(),
+            secs_left=secs_left,
+            bankroll=oracle.bankroll,
+            inventory_up_value=_inventory_up_value(oracle, market.market_id),
+            quote_size=quote_size,
+            half_spread_base=half_spread_base,
+            inventory_skew_coef=skew_coef,
+        )
+
         quotes = []
-        if post_yes:
+        if result["yes"]:
             quotes.append({
                 "strategy": "B",
                 "action": "quote",
@@ -152,13 +262,14 @@ async def maker_loop(
                 "condition_id": market.condition_id,
                 "token_id": market.yes_token_id,
                 "side": "YES",
-                "price": bid_price,
-                "dollar_size": quote_size,
+                "price": result["yes"]["price"],
+                "dollar_size": result["yes"]["dollar_size"],
+                "fair": fair,
                 "order_type": "POST_ONLY",
                 "queued_at": time.time(),
                 "window_open_price": market.window_open_price,
             })
-        if post_no:
+        if result["no"]:
             quotes.append({
                 "strategy": "B",
                 "action": "quote",
@@ -166,12 +277,24 @@ async def maker_loop(
                 "condition_id": market.condition_id,
                 "token_id": market.no_token_id,
                 "side": "NO",
-                "price": 1.0 - ask_price,
-                "dollar_size": quote_size,
+                "price": result["no"]["price"],
+                "dollar_size": result["no"]["dollar_size"],
+                "fair": 1.0 - fair,
                 "order_type": "POST_ONLY",
                 "queued_at": time.time(),
                 "window_open_price": market.window_open_price,
             })
 
+        if not quotes:
+            # Book is richer than our fair on both sides — resting would overpay.
+            await _pull("no +EV side (book richer than fair)")
+            continue
+
+        log.info(
+            f"[B] T-{secs_left:.0f}s fair={fair:.3f} skew={result['skew']:+.3f} "
+            f"hs={result['half_spread']:.3f} → "
+            + ", ".join(f"{q['side']}@{q['price']:.2f}" for q in quotes)
+        )
         for q in quotes:
             await order_queue.put(q)
+        quotes_active = True

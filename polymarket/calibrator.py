@@ -26,7 +26,7 @@ MIN_TRADES_FOR_CALIBRATION = 20
 # previously the hardcoded 0.05 here silently overrode the MIN_EDGE_NET env default.
 # Mutated at runtime by the nightly calibrator and the dashboard Tuning tab.
 LIVE_PARAMS: dict = {
-    "min_delta_threshold": float(os.getenv("MIN_DELTA_THRESHOLD", "0.001")),
+    "min_delta_threshold": float(os.getenv("MIN_DELTA_THRESHOLD", "0.0003")),
     "min_edge_net": float(os.getenv("MIN_EDGE_NET", "0.05")),
     "entry_seconds_before_close": float(os.getenv("ENTRY_SECONDS_BEFORE_CLOSE", "15")),
     "min_order_size_usd": float(os.getenv("MIN_ORDER_SIZE_USD", "1.0")),
@@ -36,7 +36,7 @@ LIVE_PARAMS: dict = {
 
 # H5: valid ranges for calibrator parameters (Claude may only adjust these three)
 PARAM_RANGES = {
-    "min_delta_threshold": (0.0005, 0.005),
+    "min_delta_threshold": (0.0001, 0.005),
     "min_edge_net": (0.02, 0.15),
     "entry_seconds_before_close": (5.0, 30.0),
 }

@@ -86,6 +86,7 @@ async def run() -> None:
         "min_edge_net": 0.07,
         "entry_seconds_before_close": 12.0,
         "min_order_size_usd": 0.0,
+        "min_delta_threshold": 0.001,  # 0.10% was too high — blocked all normal-vol signals
     }
     try:
         from polymarket.data import load_state

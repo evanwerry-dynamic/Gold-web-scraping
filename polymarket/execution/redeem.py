@@ -716,7 +716,18 @@ async def _redeem_position(
     loop = asyncio.get_running_loop()
 
     ct = w3.eth.contract(address=w3.to_checksum_address(CONDITIONAL_TOKENS), abi=_CT_ABI)
-    cid_bytes = bytes.fromhex(condition_id.replace("0x", "").zfill(64))
+    _stripped_cid = condition_id.replace("0x", "").replace("0X", "").strip()
+    if len(_stripped_cid) != 64:
+        raise RuntimeError(
+            f"conditionId must be exactly 64 hex chars (bytes32), "
+            f"got {len(_stripped_cid)} chars: {condition_id!r}"
+        )
+    try:
+        cid_bytes = bytes.fromhex(_stripped_cid)
+    except ValueError as _hex_err:
+        raise RuntimeError(
+            f"conditionId contains non-hex characters: {condition_id!r} — {_hex_err}"
+        )
     holder = w3.to_checksum_address(proxy) if proxy else acct.address
 
     # Confirm which collateral the holder owns tokens for (USDC.e is the CTF

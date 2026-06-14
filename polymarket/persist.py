@@ -86,12 +86,18 @@ async def startup_position_sync(oracle: OracleBuffer) -> None:
 
         _hex_ok = False
         if condition_id:
-            stripped = condition_id.replace("0x", "").replace("0X", "")
-            try:
-                bytes.fromhex(stripped.zfill(64))
-                _hex_ok = True
-            except ValueError:
-                pass
+            stripped = condition_id.replace("0x", "").replace("0X", "").strip()
+            if len(stripped) == 64:
+                try:
+                    bytes.fromhex(stripped)
+                    _hex_ok = True
+                except ValueError:
+                    pass
+            if not _hex_ok:
+                log.debug(
+                    f"[startup_sync] conditionId not 64 valid hex chars "
+                    f"({len(stripped)} chars): {condition_id!r}"
+                )
 
         if not _hex_ok and token_id:
             condition_id = await _gamma_condition_id(token_id, loop)
@@ -163,15 +169,16 @@ async def _gamma_condition_id(token_id: str, loop) -> str:
                     or ""
                 )
                 if cid:
-                    stripped = cid.replace("0x", "").replace("0X", "")
-                    try:
-                        bytes.fromhex(stripped.zfill(64))
-                        log.info(
-                            f"[startup_sync] Gamma conditionId for {token_id[:12]}…: {cid[:16]}…"
-                        )
-                        return cid
-                    except ValueError:
-                        pass
+                    stripped = cid.replace("0x", "").replace("0X", "").strip()
+                    if len(stripped) == 64:
+                        try:
+                            bytes.fromhex(stripped)
+                            log.info(
+                                f"[startup_sync] Gamma conditionId for {token_id[:12]}…: {cid[:16]}…"
+                            )
+                            return cid
+                        except ValueError:
+                            pass
         except Exception as exc:
             log.debug(f"[startup_sync] Gamma lookup ({param}) failed: {exc!r}")
     return ""

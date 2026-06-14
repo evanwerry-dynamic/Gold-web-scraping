@@ -131,18 +131,24 @@ async def _check_ghost_positions(oracle: OracleBuffer) -> None:
             )
             condition_id = str(raw_cid) if raw_cid else ""
 
-            # Validate that condition_id is actually a usable hex string.
-            # Data API sometimes returns non-hex IDs in these fields.
+            # A valid Gnosis CTF conditionId is exactly bytes32 = 64 hex chars.
+            # zfill(64) was silently accepting short/malformed IDs; require exact length.
             _hex_ok = False
             if condition_id:
-                _stripped = condition_id.replace("0x", "").replace("0X", "")
-                try:
-                    bytes.fromhex(_stripped.zfill(64))
-                    _hex_ok = True
-                except ValueError:
+                _stripped = condition_id.replace("0x", "").replace("0X", "").strip()
+                if len(_stripped) == 64:
+                    try:
+                        bytes.fromhex(_stripped)
+                        _hex_ok = True
+                    except ValueError:
+                        log.warning(
+                            f"[sanity] conditionId has non-hex chars "
+                            f"({condition_id!r}) — trying Gamma API"
+                        )
+                else:
                     log.warning(
-                        f"[sanity] conditionId from Data API is not valid hex "
-                        f"({condition_id!r}) — will look up via Gamma API"
+                        f"[sanity] conditionId wrong length ({len(_stripped)} chars, need 64): "
+                        f"{condition_id!r} — trying Gamma API"
                     )
 
             # If Data API didn't give a valid conditionId, look it up from Gamma
@@ -233,13 +239,14 @@ async def _lookup_condition_id(token_id: str, loop) -> str:
         if markets:
             cid = str(markets[0].get("conditionId") or markets[0].get("condition_id") or "")
             if cid:
-                stripped = cid.replace("0x", "").replace("0X", "")
-                try:
-                    bytes.fromhex(stripped.zfill(64))
-                    log.info(f"[sanity] Gamma API resolved conditionId for token {token_id[:12]}…: {cid[:16]}…")
-                    return cid
-                except ValueError:
-                    pass
+                stripped = cid.replace("0x", "").replace("0X", "").strip()
+                if len(stripped) == 64:
+                    try:
+                        bytes.fromhex(stripped)
+                        log.info(f"[sanity] Gamma API resolved conditionId for token {token_id[:12]}…: {cid[:16]}…")
+                        return cid
+                    except ValueError:
+                        pass
     except Exception as exc:
         log.warning(f"[sanity] Gamma conditionId lookup failed for {token_id[:12]}…: {exc!r}")
     return ""

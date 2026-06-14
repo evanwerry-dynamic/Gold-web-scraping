@@ -26,7 +26,7 @@ REDEEM_INTERVAL = 30.0
 
 async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = None) -> None:
     """Claim resolved ERC-1155 positions for pUSD. Never exits."""
-    log.info("Redemption loop starting [build: redeem-v3 safe-execTransaction + collateral-autodetect]...")
+    log.info("Redemption loop starting [build: redeem-v4 factory.proxy batch + adapter pUSD]...")
     while True:
         await asyncio.sleep(REDEEM_INTERVAL)
 
@@ -142,7 +142,27 @@ _CT_ABI = [
         "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}],
         "stateMutability": "view", "type": "function",
     },
+    {
+        "inputs": [{"name": "operator", "type": "address"}, {"name": "approved", "type": "bool"}],
+        "name": "setApprovalForAll", "outputs": [],
+        "stateMutability": "nonpayable", "type": "function",
+    },
 ]
+
+# V2 CtfCollateralAdapter. Its redeemPositions burns the caller's USDC.e outcome
+# tokens, wraps the proceeds into pUSD, and returns pUSD to the caller. Only
+# conditionId is read; the other args are kept for ABI compatibility. The caller
+# must first setApprovalForAll(adapter) on ConditionalTokens.
+_ADAPTER_ABI = [{
+    "inputs": [
+        {"name": "collateralToken", "type": "address"},
+        {"name": "parentCollectionId", "type": "bytes32"},
+        {"name": "conditionId", "type": "bytes32"},
+        {"name": "indexSets", "type": "uint256[]"},
+    ],
+    "name": "redeemPositions", "outputs": [],
+    "stateMutability": "nonpayable", "type": "function",
+}]
 
 # Gnosis Safe (Polymarket "Safe" proxy used by browser-wallet/MetaMask accounts).
 _SAFE_ABI = [
@@ -254,46 +274,89 @@ async def _detect_collateral(w3, ct, holder: str, cid_bytes: bytes, candidates, 
     return None, None, 0
 
 
-async def _redeem_through_proxy(w3, acct, pk: str, proxy: str, target: str, inner_data: str, loop) -> str:
-    """Execute `inner_data` against `target` from the user's proxy wallet.
+def _build_redeem_calls(w3, ct, collateral: str, cid_bytes: bytes):
+    """Calls to redeem into pUSD: approve the adapter, then redeem through it.
 
-    Positions are held by the proxy, not the EOA, so redeemPositions must run
-    with the proxy as msg.sender. Browser-wallet accounts use a Gnosis Safe
-    (execTransaction); Magic/email accounts use the 1proxy (proxy()). The EOA
-    is the sole owner and pays gas directly — no relayer/Builder key needed.
+    Returns [(to, calldata), …]. ConditionalTokens.setApprovalForAll lets the
+    adapter pull the ERC-1155 tokens; the adapter then burns them, unwraps the
+    USDC.e proceeds, and returns pUSD to the caller (the proxy). Both run in one
+    proxy() batch so the approval is in place before the redeem.
     """
+    from polymarket.execution.wallet import CTF_COLLATERAL_ADAPTER, CONDITIONAL_TOKENS
+
+    adapter = w3.to_checksum_address(CTF_COLLATERAL_ADAPTER)
+    approve_data = ct.encode_abi("setApprovalForAll", args=[adapter, True])
+
+    adapter_c = w3.eth.contract(address=adapter, abi=_ADAPTER_ABI)
+    redeem_data = adapter_c.encode_abi(
+        "redeemPositions",
+        args=[w3.to_checksum_address(collateral), ZERO_BYTES32, cid_bytes, [1, 2]],
+    )
+    return [
+        (w3.to_checksum_address(CONDITIONAL_TOKENS), approve_data),
+        (adapter, redeem_data),
+    ]
+
+
+async def _execute_calls(w3, acct, pk: str, proxy: str, calls, loop) -> str:
+    """Run a list of (to, calldata) calls from the position holder.
+
+    Tokens are held by the Polymarket proxy wallet (the CLOB funder), so the
+    calls must execute with the proxy as msg.sender — a direct EOA call holds no
+    tokens and reverts. Browser-wallet accounts use a "1proxy" (batched via the
+    factory's proxy()); legacy email accounts use a Gnosis Safe (execTransaction,
+    one tx per call). With no proxy configured the EOA calls directly. The owner
+    EOA pays gas itself — no relayer or Builder key required.
+    """
+    if not proxy:
+        last = None
+        for to, data in calls:
+            tx_hash, receipt = await _send_tx(w3, acct, pk, to, data, loop)
+            if receipt.status != 1:
+                raise RuntimeError(f"Redemption call reverted: {tx_hash.hex()}")
+            last = tx_hash.hex()
+        return last
+
     proxy_addr = w3.to_checksum_address(proxy)
     safe = w3.eth.contract(address=proxy_addr, abi=_SAFE_ABI)
-
     owners = None
     try:
         owners = await loop.run_in_executor(None, lambda: safe.functions.getOwners().call())
     except Exception:
-        owners = None  # Not a Safe — fall through to 1proxy
+        owners = None  # Not a Safe — use the 1proxy factory path
 
     if owners is not None:
         # 1-of-1 Safe pre-validated signature: {r = owner, s = 0, v = 1}. The
         # Safe accepts it without ECDSA recovery because msg.sender == owner.
+        # execTransaction runs one call at a time, so send them sequentially.
         owner = acct.address
         sig = bytes.fromhex(owner[2:].rjust(64, "0")) + ZERO_BYTES32 + b"\x01"
-        data = safe.encode_abi(
-            "execTransaction",
-            args=[w3.to_checksum_address(target), 0, inner_data, 0,
-                  0, 0, 0, ZERO_ADDR, ZERO_ADDR, sig],
-        )
-        log.info(f"[live] Redeeming via Safe.execTransaction (owners={len(owners)})…")
-        tx_hash, receipt = await _send_tx(w3, acct, pk, proxy_addr, data, loop)
-        if receipt.status != 1:
-            raise RuntimeError(f"Safe execTransaction reverted: {tx_hash.hex()}")
-        return tx_hash.hex()
+        last = None
+        for to, data in calls:
+            exec_data = safe.encode_abi(
+                "execTransaction",
+                args=[w3.to_checksum_address(to), 0, data, 0,
+                      0, 0, 0, ZERO_ADDR, ZERO_ADDR, sig],
+            )
+            log.info(f"[live] Safe.execTransaction → {to[:10]}… (owners={len(owners)})")
+            tx_hash, receipt = await _send_tx(w3, acct, pk, proxy_addr, exec_data, loop)
+            if receipt.status != 1:
+                raise RuntimeError(f"Safe execTransaction reverted: {tx_hash.hex()}")
+            last = tx_hash.hex()
+        return last
 
-    one_proxy = w3.eth.contract(address=proxy_addr, abi=_ONE_PROXY_ABI)
-    calls = [(0, w3.to_checksum_address(target), 0, inner_data)]
-    data = one_proxy.encode_abi("proxy", args=[calls])
-    log.info("[live] Redeeming via 1proxy.proxy()…")
-    tx_hash, receipt = await _send_tx(w3, acct, pk, proxy_addr, data, loop)
+    # 1proxy: call proxy() on the FACTORY (not the wallet) — it routes the batch
+    # to the caller's proxy via _msgSender(). All calls run atomically.
+    from polymarket.execution.wallet import PROXY_WALLET_FACTORY
+
+    factory_addr = w3.to_checksum_address(PROXY_WALLET_FACTORY)
+    factory = w3.eth.contract(address=factory_addr, abi=_ONE_PROXY_ABI)
+    pcalls = [(0, w3.to_checksum_address(to), 0, data) for to, data in calls]
+    fdata = factory.encode_abi("proxy", args=[pcalls])
+    log.info(f"[live] Factory.proxy() batch of {len(pcalls)} → proxy {proxy_addr[:10]}…")
+    tx_hash, receipt = await _send_tx(w3, acct, pk, factory_addr, fdata, loop, gas=700_000)
     if receipt.status != 1:
-        raise RuntimeError(f"1proxy proxy() reverted: {tx_hash.hex()}")
+        raise RuntimeError(f"Factory proxy() reverted: {tx_hash.hex()}")
     return tx_hash.hex()
 
 
@@ -304,12 +367,12 @@ async def _redeem_position(
     side: str = "YES",
     paper: bool = True,
 ) -> None:
-    """Redeem a resolved position for collateral via ConditionalTokens.
+    """Redeem a resolved position into pUSD via the V2 CtfCollateralAdapter.
 
     Tokens are held by the Polymarket proxy wallet (the CLOB funder), so the
-    redeemPositions call is routed through that proxy — a direct EOA call finds
-    no tokens and reverts. The collateral token is auto-detected by matching the
-    holder's on-chain ERC-1155 balance.
+    redemption is routed through that proxy — a direct EOA call finds no tokens
+    and reverts. The collateral token is auto-detected by matching the holder's
+    on-chain ERC-1155 balance.
     """
     if paper:
         log.info(f"[paper] Simulating redemption: {condition_id} {shares:.2f}sh")
@@ -336,39 +399,25 @@ async def _redeem_position(
     cid_bytes = bytes.fromhex(condition_id.replace("0x", "").zfill(64))
     holder = w3.to_checksum_address(proxy) if proxy else acct.address
 
-    # Confirm which collateral the holder owns tokens for (pUSD preferred).
+    # Confirm which collateral the holder owns tokens for (USDC.e is the CTF
+    # collateral on Polymarket; the adapter converts the proceeds to pUSD).
     collateral, idx, bal = await _detect_collateral(
-        w3, ct, holder, cid_bytes, [PUSD_ADDRESS, USDCE_ADDRESS], loop
+        w3, ct, holder, cid_bytes, [USDCE_ADDRESS, PUSD_ADDRESS], loop
     )
     if collateral is None:
         log.warning(
             f"[live] No outcome-token balance for {condition_id[:16]}… at holder "
             f"{holder[:10]}… — already redeemed on-chain, or held elsewhere. "
-            "Attempting pUSD redemption anyway."
+            "Attempting USDC.e redemption anyway."
         )
-        collateral = PUSD_ADDRESS
+        collateral = USDCE_ADDRESS
     else:
         log.info(
             f"[live] Holder {holder[:10]}… owns {bal} units "
             f"(collateral={collateral[:10]}…, idx={idx})"
         )
 
-    # Redeem both index sets — safe even when one side holds zero tokens.
-    redeem_data = ct.encode_abi(
-        "redeemPositions",
-        args=[w3.to_checksum_address(collateral), ZERO_BYTES32, cid_bytes, [1, 2]],
-    )
+    calls = _build_redeem_calls(w3, ct, collateral, cid_bytes)
+    tx_hex = await _execute_calls(w3, acct, pk, proxy, calls, loop)
 
-    if proxy:
-        tx_hex = await _redeem_through_proxy(
-            w3, acct, pk, proxy, CONDITIONAL_TOKENS, redeem_data, loop
-        )
-    else:
-        tx_hash, receipt = await _send_tx(
-            w3, acct, pk, CONDITIONAL_TOKENS, redeem_data, loop
-        )
-        if receipt.status != 1:
-            raise RuntimeError(f"Redemption tx reverted: {tx_hash.hex()}")
-        tx_hex = tx_hash.hex()
-
-    log.info(f"[live] Redeemed {condition_id[:16]}…: {shares:.2f}sh → tx {tx_hex}")
+    log.info(f"[live] Redeemed {condition_id[:16]}…: {shares:.2f}sh → pUSD, tx {tx_hex}")

@@ -24,6 +24,11 @@ COLLATERAL_ONRAMP = os.getenv("COLLATERAL_ONRAMP", "0x93070a847efEf7F70739046A92
 CTF_COLLATERAL_ADAPTER      = os.getenv("CTF_COLLATERAL_ADAPTER", "0xADa100874d00e3331D00F2007a9c336a65009718")
 NEG_RISK_COLLATERAL_ADAPTER = os.getenv("NEG_RISK_COLLATERAL_ADAPTER", "0xAdA200001000ef00D07553cEE7006808F895c6F1")
 CONDITIONAL_TOKENS          = os.getenv("CONDITIONAL_TOKENS", "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045")
+# Polymarket Proxy Wallet Factory. Positions held in a browser-wallet "1proxy"
+# are redeemed by calling proxy() on this factory from the owner EOA — it routes
+# the calls to the caller's deterministic proxy via _msgSender(). Verified on
+# Polygonscan (label "Polymarket: Proxy Wallet Factory").
+PROXY_WALLET_FACTORY        = os.getenv("PROXY_WALLET_FACTORY", "0xaB45c5A4B0c941a2F231C04C3f49182e1A254052")
 # Legacy collateral (bridged USDC.e) — passed as the collateralToken arg for
 # ABI compatibility; the V2 adapter ignores it and returns pUSD regardless.
 USDCE_ADDRESS               = os.getenv("USDCE_ADDRESS", "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174")

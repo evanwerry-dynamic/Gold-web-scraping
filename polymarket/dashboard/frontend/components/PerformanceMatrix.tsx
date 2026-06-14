@@ -7,7 +7,8 @@ export function PerformanceMatrix() {
   const trades = useTradesStore((s) => s.trades);
 
   const stats = STRATEGIES.map((s) => {
-    const st = trades.filter((t) => t.strategy === s);
+    // Exclude rejected/zero-size orders — they never reached the exchange
+    const st = trades.filter((t) => t.strategy === s && t.action !== "rejected" && t.dollar_size > 0);
     const closed = st.filter((t) => t.pnl !== null);
     const wins = closed.filter((t) => (t.pnl ?? 0) > 0).length;
     const total_pnl = closed.reduce((sum, t) => sum + (t.pnl ?? 0), 0);

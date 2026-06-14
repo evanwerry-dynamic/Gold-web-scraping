@@ -115,11 +115,12 @@ async def maker_loop(
             "market_id": market.market_id,
             "condition_id": market.condition_id,
             "token_id": market.yes_token_id,
-            "side": "BUY",
+            "side": "YES",   # market direction — wins if BTC goes UP
             "price": bid_price,
             "dollar_size": quote_size,
             "order_type": "POST_ONLY",
             "queued_at": time.time(),
+            "window_open_price": market.window_open_price,
         })
 
         # Only post ask when imbalance is not heavily one-sided
@@ -130,11 +131,12 @@ async def maker_loop(
                 "market_id": market.market_id,
                 "condition_id": market.condition_id,
                 "token_id": market.no_token_id,  # Selling YES = buying NO
-                "side": "BUY",
+                "side": "NO",    # market direction — wins if BTC goes DOWN
                 "price": 1.0 - ask_price,
                 "dollar_size": quote_size,
                 "order_type": "POST_ONLY",
                 "queued_at": time.time(),
+                "window_open_price": market.window_open_price,
             })
 
         for q in quotes:

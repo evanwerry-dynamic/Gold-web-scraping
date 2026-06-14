@@ -156,7 +156,14 @@ async def _resolve_market_positions(oracle: OracleBuffer, market_id: str, loop) 
             log.warning(f"[resolve-orphan] {market_id}: no outcome data, marking LOST")
             btc_went_up = False
 
-        won = (pos.side in ("UP", "YES")) == btc_went_up
+        bet_up = pos.side in ("UP", "YES")
+        bet_down = pos.side in ("DOWN", "NO")
+        if not bet_up and not bet_down:
+            # Legacy "BUY" side — cannot determine direction; mark LOST (conservative)
+            log.warning(f"[resolve-orphan] {market_id}: side={pos.side!r} is ambiguous — marking LOST")
+            won = False
+        else:
+            won = bet_up == btc_went_up
         pos.resolution       = 1.0 if won else 0.0
         pos.resolved         = True
         pos.settlement_price = oracle.btc_price
@@ -268,7 +275,13 @@ async def _resolve_previous_window(oracle: OracleBuffer, loop) -> None:
     btc_went_up = gamma_outcome
     resolved_count = 0
     for pos in unresolved:
-        won = (pos.side in ("UP", "YES")) == btc_went_up
+        bet_up = pos.side in ("UP", "YES")
+        bet_down = pos.side in ("DOWN", "NO")
+        if not bet_up and not bet_down:
+            log.warning(f"[resolve] {pos.market_id}: side={pos.side!r} is ambiguous — marking LOST")
+            won = False
+        else:
+            won = bet_up == btc_went_up
         pos.resolution       = 1.0 if won else 0.0
         pos.resolved         = True
         pos.settlement_price = final_price

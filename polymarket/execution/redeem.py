@@ -140,7 +140,10 @@ async def _ensure_approval_for_all(w3, acct, pk: str, loop) -> None:
     log.info("[live] Setting ConditionalTokens.setApprovalForAll for CTF adapter…")
     block = await loop.run_in_executor(None, lambda: w3.eth.get_block("latest"))
     base_fee = block.get("baseFeePerGas", w3.to_wei(300, "gwei"))
-    priority = w3.to_wei(50, "gwei")
+    # 200 gwei priority — must clear the +10% replacement bump over any stuck
+    # legacy tx (those were sent at gasPrice=50 gwei; 50 fails the bump, 200 wins).
+    # Redemption is 200k gas, so even at this priority the cost is ~$0.01 in POL.
+    priority = w3.to_wei(200, "gwei")
     max_fee = base_fee * 2 + priority
 
     nonce = await loop.run_in_executor(
@@ -232,7 +235,10 @@ async def _redeem_position(
     # of 50 gwei ensures validators include the tx promptly on Polygon.
     block = await loop.run_in_executor(None, lambda: w3.eth.get_block("latest"))
     base_fee = block.get("baseFeePerGas", w3.to_wei(300, "gwei"))
-    priority = w3.to_wei(50, "gwei")
+    # 200 gwei priority — must clear the +10% replacement bump over any stuck
+    # legacy tx (those were sent at gasPrice=50 gwei; 50 fails the bump, 200 wins).
+    # Redemption is 200k gas, so even at this priority the cost is ~$0.01 in POL.
+    priority = w3.to_wei(200, "gwei")
     max_fee = base_fee * 2 + priority
 
     tx = contract.functions.redeemPositions(

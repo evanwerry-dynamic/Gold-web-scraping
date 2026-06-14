@@ -29,6 +29,9 @@ PAPER_TRADING = os.getenv("PAPER_TRADING", "true").lower() == "true"
 PAPER_FRICTION: bool = os.getenv("PAPER_FRICTION", "true").lower() != "false"
 
 ORDER_CONCURRENCY = 3
+# Max age of a queued order before it is discarded as stale. Entry window is 15s;
+# 8s leaves headroom for the ~5s FOK resolution so an order never fills past close.
+STALE_ORDER_SECONDS = float(os.getenv("STALE_ORDER_SECONDS", "8"))
 FILL_POLL_INTERVAL = 1.0   # seconds between fill status checks
 FOK_TIMEOUT = float(os.getenv("FOK_TIMEOUT_SECONDS", "5"))    # FOK considered failed after
 GTC_TIMEOUT = float(os.getenv("GTC_TIMEOUT_SECONDS", "30"))   # GTC cancelled after
@@ -87,9 +90,16 @@ async def _process_order(
         log.info(f"[OMS] Order dropped — emergency halt active ({intent.get('strategy')})")
         return
 
-    # Discard stale orders older than 12s (entry window is 15s; allow 3s OMS queue lag)
-    age = time.time() - intent.get("queued_at", time.time())
-    if age > 12.0:
+    # Discard stale orders. Entry window is 15s and a FOK can take ~5s to resolve,
+    # so an order queued more than STALE_ORDER_SECONDS ago risks filling at or after
+    # window close (buying the wrong side at resolution). Fail CLOSED if queued_at
+    # is missing — a timeless intent must never be treated as fresh.
+    queued_at = intent.get("queued_at")
+    if queued_at is None:
+        log.warning(f"[OMS] Dropping {intent.get('strategy')} order with no queued_at timestamp")
+        return
+    age = time.time() - queued_at
+    if age > STALE_ORDER_SECONDS:
         log.warning(f"[OMS] Discarding stale {intent.get('strategy')} order ({age:.1f}s old)")
         return
 
@@ -439,6 +449,7 @@ async def _track_until_terminal(
                     side=intent.get("side", "YES"),
                     shares=shares,
                     cost_basis=dollar_size,
+                    window_open_price=intent.get("window_open_price", 0.0),
                     strategy=intent.get("strategy", "A"),
                 )
                 async with oracle.bankroll_lock:
@@ -522,6 +533,7 @@ async def _track_until_terminal(
                     side=intent.get("side", "YES"),
                     shares=shares,
                     cost_basis=dollar_size,
+                    window_open_price=intent.get("window_open_price", 0.0),
                     strategy=intent.get("strategy", "A"),
                 )
                 async with oracle.bankroll_lock:

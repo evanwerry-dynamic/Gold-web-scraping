@@ -120,14 +120,25 @@ async def startup_position_sync(oracle: OracleBuffer) -> None:
         # Check resolution status from Gamma
         resolved, resolution_price = await _gamma_resolution(token_id, condition_id, loop)
 
-        order_id = f"startup-sync-{token_id[:16]}"
+        # Use the FULL token_id in the synthetic order_id — a 16-char prefix can
+        # collide between two large decimal token IDs and silently overwrite a
+        # real position, dropping it from redemption tracking.
+        order_id = f"startup-sync-{token_id}"
+        if order_id in oracle.open_positions:
+            log.info(f"[startup_sync] {order_id[:28]}… already tracked — skipping")
+            continue
+        # cost_basis = payout so redemption books ~0 P&L. A recovered on-chain
+        # position is recovered CAPITAL, not profit — booking payout as pure
+        # profit (cost_basis=0) inflated total_pnl and corrupted the loss-streak
+        # circuit breaker on every redeploy.
+        ghost_cost_basis = payout_shares if resolution_price else 0.0
         pos = OpenPosition(
             market_id=f"startup-{title}",
             condition_id=condition_id,
             token_id=token_id,
             side=side,
             shares=payout_shares,
-            cost_basis=0.0,
+            cost_basis=ghost_cost_basis,
             resolved=resolved,
             resolution=resolution_price,
             redeemed=False,
@@ -256,25 +267,17 @@ async def persist_loop(oracle: OracleBuffer) -> None:
     while True:
         await asyncio.sleep(PERSIST_INTERVAL)
         try:
+            from dataclasses import asdict
+            # Serialize ALL OpenPosition fields via asdict so a newly-added field
+            # can never be silently dropped on a redeploy (previously strategy,
+            # redeem_attempts and settlement_price were lost, resetting P&L
+            # attribution and the give-up counter on every deploy).
             state = {
                 "bankroll": oracle.bankroll,
                 "total_pnl": oracle.total_pnl,
                 "today_pnl": oracle.today_pnl,
                 "open_positions": {
-                    oid: {
-                        "market_id": p.market_id,
-                        "condition_id": p.condition_id,
-                        "token_id": p.token_id,
-                        "side": p.side,
-                        "shares": p.shares,
-                        "cost_basis": p.cost_basis,
-                        "resolved": p.resolved,
-                        "resolution": p.resolution,
-                        "redeemed": p.redeemed,
-                        # M7: skip window_open_price=0.0 — binance_ws backfill handles it
-                        "window_open_price": p.window_open_price if p.window_open_price else None,
-                    }
-                    for oid, p in oracle.open_positions.items()
+                    oid: asdict(p) for oid, p in oracle.open_positions.items()
                 },
             }
             loop = asyncio.get_running_loop()
@@ -343,19 +346,20 @@ def restore_state(oracle: OracleBuffer) -> None:
                 pass
         if is_old:
             continue
-        oracle.open_positions[oid] = OpenPosition(
-            market_id=p["market_id"],
-            condition_id=p["condition_id"],
-            token_id=p["token_id"],
-            side=p["side"],
-            shares=p["shares"],
-            cost_basis=p["cost_basis"],
-            resolved=p.get("resolved", False),
-            resolution=p.get("resolution", 0.0),
-            redeemed=p.get("redeemed", False),
-            # M7: treat None/0 window_open_price as 0.0 — backfilled by binance_ws
-            window_open_price=p.get("window_open_price") or 0.0,
-        )
+        # Reconstruct from all persisted fields, tolerating both the legacy
+        # hand-listed schema and the new asdict schema. Unknown keys are dropped
+        # and missing keys fall back to dataclass defaults.
+        import dataclasses
+        valid_fields = {f.name for f in dataclasses.fields(OpenPosition)}
+        kwargs = {k: v for k, v in p.items() if k in valid_fields}
+        # window_open_price may have been persisted as None (legacy) — coerce to 0.0
+        if kwargs.get("window_open_price") is None:
+            kwargs["window_open_price"] = 0.0
+        # Required fields must exist; skip a corrupt row rather than crash the boot
+        if not all(k in kwargs for k in ("market_id", "condition_id", "token_id", "side", "shares", "cost_basis")):
+            log.warning(f"Skipping corrupt restored position {oid}: missing required fields")
+            continue
+        oracle.open_positions[oid] = OpenPosition(**kwargs)
     log.info(
         f"State restored: bankroll={oracle.bankroll:.2f}, "
         f"positions={len(oracle.open_positions)} ({skipped} stale skipped)"

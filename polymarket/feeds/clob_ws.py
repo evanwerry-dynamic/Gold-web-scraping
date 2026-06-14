@@ -134,48 +134,69 @@ def _update_orderbook(oracle: OracleBuffer, msg: dict) -> None:
     if not bids and not asks:
         return
 
-    # H6: update last_clob_ts on real book data (dust-only messages still count as alive)
-    oracle.last_clob_ts = time.time()
-
-    # Only update each side when data is actually present — never write 0 for missing bids.
-    # Ignore dust orders at extreme prices (bid <0.02, ask >0.98): these are empty-book
-    # placeholders that remain when no real orders exist. Keeping them would make the
-    # signal loop compute negative edge on every evaluation and never trade.
-    # M5: last_book_update_ts only set when real (non-dust) prices actually land —
-    # prevents maker_loop stale check from firing every 10s on thin markets.
-    #
     # ORDER-INDEPENDENT PARSING: Polymarket's WS sends bid/ask arrays in an order
     # that contradicts its own docs and has flipped historically (see
-    # Polymarket/rs-clob-client #330 — bids arrive ascending, asks descending).
-    # Indexing [0] grabbed the WORST level (deep dust), which the dust filter then
-    # discarded, leaving yes_bid/yes_ask frozen at their defaults and every maker
-    # quote crossing the real book. Compute best = max(bids)/min(asks) so we never
-    # depend on the array order.
-    if bids:
-        bid_sorted = sorted(bids, key=lambda b: float(b["price"]), reverse=True)
-        best_bid = float(bid_sorted[0]["price"])
-        bdepth = sum(float(b["size"]) for b in bid_sorted[:3])  # 3 best (highest) levels
-        if best_bid >= 0.02:
-            if asset_id == m.yes_token_id:
-                m.yes_bid = best_bid
-                m.bid_depth = bdepth
-                m.last_book_update_ts = time.time()
-            elif asset_id == m.no_token_id:
-                m.no_bid = best_bid
-                m.last_book_update_ts = time.time()
+    # Polymarket/rs-clob-client #330). Compute best = max(bids)/min(asks) so we
+    # never depend on the array order. Each "book" event is a FULL snapshot for a
+    # single asset_id, so both sides come from the SAME instant — updating them
+    # together guarantees the stored book can never be internally crossed.
+    try:
+        best_bid = max((float(b["price"]) for b in bids), default=None)
+        best_ask = min((float(a["price"]) for a in asks), default=None)
+        bdepth = sum(float(b["size"]) for b in sorted(
+            bids, key=lambda b: float(b["price"]), reverse=True)[:3]) if bids else 0.0
+        adepth = sum(float(a["size"]) for a in sorted(
+            asks, key=lambda a: float(a["price"]))[:3]) if asks else 0.0
+    except (KeyError, ValueError, TypeError) as exc:
+        log.debug(f"[clob] malformed book level, skipping frame: {exc!r}")
+        return
 
-    if asks:
-        ask_sorted = sorted(asks, key=lambda a: float(a["price"]))
-        best_ask = float(ask_sorted[0]["price"])
-        depth = sum(float(a["size"]) for a in ask_sorted[:3])  # 3 best (lowest) levels
-        if best_ask <= 0.98:
-            if asset_id == m.yes_token_id:
-                m.yes_ask = best_ask
-                m.ask_depth = depth
-                m.last_book_update_ts = time.time()
-            elif asset_id == m.no_token_id:
-                m.no_ask = best_ask
-                m.last_book_update_ts = time.time()
+    # Empty-book placeholder: Polymarket pins BOTH sides to the extremes
+    # (~0.01 bid / ~0.99 ask) when no real orders exist. Only skip when BOTH
+    # sides are extreme at once — a genuine near-resolution book (e.g. 0.98 bid /
+    # 0.99 ask) has a tight spread at the top and MUST be captured, otherwise the
+    # ask freezes stale-low and the signal loop sees phantom edge (this was the
+    # cause of the BID>ASK crossed-book glitch in the final seconds of a window).
+    if (best_bid is not None and best_ask is not None
+            and best_bid <= 0.02 and best_ask >= 0.98):
+        return  # keep last good values; do not trade on an empty book
+
+    # Accept genuine prices across the full [0.001, 0.999] range.
+    valid_bid = best_bid if (best_bid is not None and 0.001 <= best_bid <= 0.999) else None
+    valid_ask = best_ask if (best_ask is not None and 0.001 <= best_ask <= 0.999) else None
+    if valid_bid is None and valid_ask is None:
+        return
+
+    # H6: update last_clob_ts on real book data
+    oracle.last_clob_ts = time.time()
+    now = time.time()
+
+    if asset_id == m.yes_token_id:
+        if valid_bid is not None:
+            m.yes_bid = valid_bid
+            m.bid_depth = bdepth
+            m.last_book_update_ts = now
+        if valid_ask is not None:
+            m.yes_ask = valid_ask
+            m.ask_depth = adepth
+            m.last_book_update_ts = now
+        # Non-cross guard: if only one side updated this frame and it now crosses
+        # the stale opposite side, the stale side is wrong. Pull the ask up to the
+        # bid (conservative — never lets the bot believe it can buy cheaper than
+        # the live bid). Prevents the BID>ASK display and phantom-edge trades.
+        if m.yes_bid >= m.yes_ask:
+            m.yes_ask = min(0.999, m.yes_bid)
+    elif asset_id == m.no_token_id:
+        if valid_bid is not None:
+            m.no_bid = valid_bid
+            m.bid_depth = bdepth
+            m.last_book_update_ts = now
+        if valid_ask is not None:
+            m.no_ask = valid_ask
+            m.ask_depth = adepth
+            m.last_book_update_ts = now
+        if m.no_bid >= m.no_ask:
+            m.no_ask = min(0.999, m.no_bid)
 
 
 def _on_trade(oracle: OracleBuffer, msg: dict) -> None:

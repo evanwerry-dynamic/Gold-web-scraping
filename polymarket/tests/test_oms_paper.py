@@ -103,8 +103,11 @@ class TestOmsDeduplication:
         intent1 = _market_order(market_id="mkt-1", strategy="A", side="YES")
         intent2 = _market_order(market_id="mkt-1", strategy="A", side="YES")
 
-        # Process first order, then try second while first key is still active
-        oms_module._pending_market_keys.add("mkt-1-A-YES")
+        # Process first order, then try second while first key is still active.
+        # The dedup key includes the token-id suffix (last 6 chars) so YES/NO arb
+        # legs on the same market don't collide — mirror that exact format here.
+        token_suffix = intent1["token_id"][-6:]
+        oms_module._pending_market_keys.add(f"mkt-1-A-YES-{token_suffix}")
         # Second order should be deduplicated
         await _process_order(intent2, sem, oracle, risk_mgr)
         # Bankroll unchanged because the second order was dropped

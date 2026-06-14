@@ -196,13 +196,28 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
             try:
                 payout = pos.shares * pos.resolution  # resolution=1.0 → won
                 if payout > 0:
-                    await _redeem_position(
+                    redeemed_ok = await _redeem_position(
                         pos.condition_id, pos.token_id, pos.shares,
                         pos.side, oracle.paper_trading,
                     )
-                    # Credit bankroll only after on-chain call succeeds (or paper sim)
-                    async with oracle.bankroll_lock:
-                        oracle.bankroll += payout
+                    # PHANTOM-WIN LOCKDOWN: only credit bankroll when redemption
+                    # actually burned on-chain tokens for collateral. If no tokens
+                    # were found (a mis-scored "win" or an already-settled
+                    # position), _redeem_position returns False — crediting payout
+                    # here would invent money that doesn't exist on-chain. Book it
+                    # as no payout so the position's cost is realised as the loss
+                    # it actually was.
+                    if redeemed_ok:
+                        async with oracle.bankroll_lock:
+                            oracle.bankroll += payout
+                    else:
+                        log.warning(
+                            f"Redeem found no on-chain tokens for {pos.market_id} "
+                            f"(side={pos.side}, cond={pos.condition_id[:16]}…) — "
+                            "treating as no payout (phantom or already-settled). "
+                            "Bankroll NOT credited."
+                        )
+                        payout = 0.0
 
                 # Only mark redeemed after redemption succeeds — suppresses retries on tx revert
                 pos.redeemed = True
@@ -666,17 +681,26 @@ async def _redeem_position(
     shares: float,
     side: str = "YES",
     paper: bool = True,
-) -> None:
+) -> bool:
     """Redeem a resolved position into pUSD via the V2 CtfCollateralAdapter.
 
     Tokens are held by the Polymarket proxy wallet (the CLOB funder), so the
     redemption is routed through that proxy — a direct EOA call finds no tokens
     and reverts. The collateral token is auto-detected by matching the holder's
     on-chain ERC-1155 balance.
+
+    Returns:
+        True  — tokens were actually redeemed on-chain (or paper-simulated).
+        False — the holder owns no outcome tokens for this condition, so nothing
+                was redeemed (phantom win or already-settled). The caller must NOT
+                credit the bankroll in this case.
+    Raises:
+        OnChainNotResolvedYet — settlement hasn't hit the chain yet (retry later).
+        RuntimeError / Exception — a real failure that should count toward retries.
     """
     if paper:
         log.info(f"[paper] Simulating redemption: {condition_id} {shares:.2f}sh")
-        return
+        return True
 
     from polymarket.execution.wallet import (
         PUSD_ADDRESS, USDCE_ADDRESS, CONDITIONAL_TOKENS, get_web3,
@@ -718,12 +742,14 @@ async def _redeem_position(
     if collateral is None:
         # Balance is 0 for all (collateral, indexSet) combinations.
         # The position has likely already been redeemed on-chain (manually or
-        # by Polymarket's auto-settlement). Nothing to burn; skip quietly.
+        # by Polymarket's auto-settlement), OR it was mis-scored as a win and the
+        # tokens were never held. Nothing to burn. Return False so the caller does
+        # NOT credit bankroll for a payout that has no on-chain backing.
         log.info(
             f"[live] No outcome-token balance for {condition_id[:16]}… at "
             f"{holder[:10]}… — already redeemed or not held here. Skipping."
         )
-        return
+        return False
     log.info(
         f"[live] Holder {holder[:10]}… owns {bal} units "
         f"(collateral={collateral[:10]}…, idx={idx})"
@@ -762,3 +788,4 @@ async def _redeem_position(
     tx_hex = await _execute_calls(w3, acct, pk, proxy, calls, loop)
 
     log.info(f"[live] Redeemed {condition_id[:16]}…: {shares:.2f}sh → USDC.e, tx {tx_hex}")
+    return True

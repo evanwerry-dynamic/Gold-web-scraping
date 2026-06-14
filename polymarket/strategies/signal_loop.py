@@ -93,6 +93,21 @@ async def signal_loop(
             )
             continue
 
+        # Lenient freshness gate: block only on clearly stale data, not thin-but-live books.
+        # 10s price staleness = feed is dead; book_ts==0 = no book ever received for this
+        # market (default 0.85 asks still in use — trading on made-up prices).
+        price_age = time.time() - oracle.last_price_ts
+        if price_age > 10.0:
+            log.warning(
+                f"[A] T-{secs_left:.0f}s: price feed stale {price_age:.1f}s — skip"
+            )
+            continue
+        if market.last_book_update_ts == 0.0:
+            log.info(
+                f"[A] T-{secs_left:.0f}s: orderbook not yet received for {market.market_id[:12]}… — skip"
+            )
+            continue
+
         oracle.strategy_phase = "FAIR"
         direction = "UP" if delta > 0 else "DOWN"
         sigma = oracle.vol_estimator.sigma_per_second()

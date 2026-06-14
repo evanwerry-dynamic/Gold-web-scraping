@@ -26,7 +26,7 @@ REDEEM_INTERVAL = 30.0
 
 async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = None) -> None:
     """Claim resolved ERC-1155 positions for pUSD. Never exits."""
-    log.info("Redemption loop starting [build: redeem-v8 max-3-attempts + manual-redeem CRITICAL]...")
+    log.info("Redemption loop starting [build: redeem-v9 multi-abi probe + owner diag + revert hex]...")
     while True:
         await asyncio.sleep(REDEEM_INTERVAL)
 
@@ -222,7 +222,8 @@ _SAFE_ABI = [
     },
 ]
 
-# Polymarket "1proxy" (Magic/email accounts). proxy() runs calls as the proxy.
+# Polymarket "1proxy" — two variants tried at runtime (first sim win used).
+# Variant A: includes typeCode (uint8) as first field.
 _ONE_PROXY_ABI = [{
     "inputs": [{
         "name": "calls", "type": "tuple[]",
@@ -236,6 +237,52 @@ _ONE_PROXY_ABI = [{
     "name": "proxy", "outputs": [{"name": "", "type": "bytes[]"}],
     "stateMutability": "payable", "type": "function",
 }]
+# Variant B: no typeCode — just (address, uint256, bytes).
+_ONE_PROXY_NO_TC_ABI = [{
+    "inputs": [{
+        "name": "calls", "type": "tuple[]",
+        "components": [
+            {"name": "to", "type": "address"},
+            {"name": "value", "type": "uint256"},
+            {"name": "data", "type": "bytes"},
+        ],
+    }],
+    "name": "proxy", "outputs": [{"name": "", "type": "bytes[]"}],
+    "stateMutability": "payable", "type": "function",
+}]
+# Variant C: ERC-4337 / SimpleAccount style — single-call execute.
+_EXECUTE_ABI = [{
+    "inputs": [
+        {"name": "dest", "type": "address"},
+        {"name": "value", "type": "uint256"},
+        {"name": "func", "type": "bytes"},
+    ],
+    "name": "execute", "outputs": [],
+    "stateMutability": "nonpayable", "type": "function",
+}]
+# For reading the proxy's registered owner (view only, many naming conventions).
+_OWNER_VIEW_ABI = [
+    {"inputs": [], "name": "owner",
+     "outputs": [{"name": "", "type": "address"}],
+     "stateMutability": "view", "type": "function"},
+]
+
+
+def _extract_revert_hex(exc) -> str:
+    """Pull the raw revert hex out of a web3 ContractLogicError for decoding.
+
+    The first 4 bytes are the custom error selector; any remaining bytes are
+    ABI-encoded parameters (often addresses). Logging the full hex lets us
+    identify the error name from a 4-byte lookup.
+    """
+    # ContractLogicError sometimes carries data in exc.args[0] as a dict
+    if hasattr(exc, 'args') and exc.args:
+        arg = exc.args[0]
+        if isinstance(arg, (bytes, bytearray)):
+            return arg.hex()
+        if isinstance(arg, dict):
+            return str(arg.get('data') or arg)
+    return repr(exc)
 
 
 async def _gas_fields(w3, loop) -> dict:
@@ -390,72 +437,78 @@ async def _execute_calls(w3, acct, pk: str, proxy: str, calls, loop) -> str:
             last = tx_hash.hex()
         return last
 
-    # 1proxy path. Build the ProxyCall batch first (shared between factory and wallet-direct).
+    # 1proxy path — try multiple function ABIs/targets in priority order.
+    # The first pattern whose eth_call simulation passes is used for the real tx.
     from polymarket.execution.wallet import PROXY_WALLET_FACTORY
 
     factory_addr = w3.to_checksum_address(PROXY_WALLET_FACTORY)
-    pcalls = [(0, w3.to_checksum_address(to), 0, data) for to, data in calls]
 
-    # Diagnostic: see what proxy address the factory maps to our EOA.
-    # If this doesn't match POLY_PROXY_ADDRESS the factory routes to the wrong wallet.
+    # Diagnose proxy ownership so we can detect key mismatches in the logs.
     try:
-        _PROXY_OF_ABI = [{"inputs": [{"name": "owner", "type": "address"}],
-                          "name": "proxyOf", "outputs": [{"name": "", "type": "address"}],
-                          "stateMutability": "view", "type": "function"}]
-        factory_ro = w3.eth.contract(address=factory_addr, abi=_PROXY_OF_ABI)
-        registered = await loop.run_in_executor(
-            None, lambda: factory_ro.functions.proxyOf(acct.address).call()
+        owner_contract = w3.eth.contract(address=proxy_addr, abi=_OWNER_VIEW_ABI)
+        proxy_owner = await loop.run_in_executor(
+            None, lambda: owner_contract.functions.owner().call()
         )
         log.info(
-            f"[live] factory.proxyOf({acct.address[:10]}…) = {registered} "
-            f"(POLY_PROXY={proxy_addr[:10]}…, match={registered.lower() == proxy_addr.lower()})"
+            f"[live] proxy.owner() = {proxy_owner} | EOA = {acct.address} "
+            f"| match = {proxy_owner.lower() == acct.address.lower()}"
         )
     except Exception as exc:
-        log.warning(f"[live] proxyOf lookup failed (ABI may differ): {exc!r}")
-        registered = None
+        log.warning(f"[live] proxy.owner() call failed: {exc!r}")
 
-    # Try factory path: sim first, send only if sim passes.
-    factory = w3.eth.contract(address=factory_addr, abi=_ONE_PROXY_ABI)
-    fdata = factory.encode_abi("proxy", args=[pcalls])
-    factory_sim_ok = False
-    try:
-        await loop.run_in_executor(
-            None, lambda: w3.eth.call({"from": acct.address, "to": factory_addr, "data": fdata})
-        )
-        factory_sim_ok = True
-        log.info(f"[live] Factory.proxy() sim OK — {len(pcalls)} call(s) → proxy {proxy_addr[:10]}…")
-    except Exception as sim_exc:
-        log.warning(f"[live] Factory.proxy() sim FAILED: {sim_exc!r} — trying wallet-direct")
+    # Build call lists for both struct variants (with and without typeCode).
+    pcalls_tc = [(0, w3.to_checksum_address(to), 0, bytes(data)) for to, data in calls]
+    pcalls_no_tc = [(w3.to_checksum_address(to), 0, bytes(data)) for to, data in calls]
 
-    if factory_sim_ok:
-        tx_hash, receipt = await _send_tx(w3, acct, pk, factory_addr, fdata, loop, gas=700_000)
-        if receipt.status != 1:
-            raise RuntimeError(f"Factory proxy() reverted on-chain: {tx_hash.hex()}")
-        return tx_hash.hex()
+    factory_tc = w3.eth.contract(address=factory_addr, abi=_ONE_PROXY_ABI)
+    factory_no_tc = w3.eth.contract(address=factory_addr, abi=_ONE_PROXY_NO_TC_ABI)
+    wallet_tc = w3.eth.contract(address=proxy_addr, abi=_ONE_PROXY_ABI)
+    wallet_no_tc = w3.eth.contract(address=proxy_addr, abi=_ONE_PROXY_NO_TC_ABI)
+    wallet_exec = w3.eth.contract(address=proxy_addr, abi=_EXECUTE_ABI)
 
-    # Fallback: call proxy() DIRECTLY on the wallet. The proxy is typically a
-    # delegating clone of the factory singleton; when called directly with the EOA
-    # as msg.sender, the singleton's proxy() function runs in the wallet's storage
-    # context and checks that msg.sender is the wallet's registered owner.
-    wallet_contract = w3.eth.contract(address=proxy_addr, abi=_ONE_PROXY_ABI)
-    wdata = wallet_contract.encode_abi("proxy", args=[pcalls])
-    try:
-        await loop.run_in_executor(
-            None, lambda: w3.eth.call({"from": acct.address, "to": proxy_addr, "data": wdata})
-        )
-        log.info(f"[live] Wallet-direct proxy() sim OK — submitting to {proxy_addr[:10]}…")
-    except Exception as sim_exc:
-        log.error(
-            f"[live] Wallet-direct proxy() sim also FAILED: {sim_exc!r}\n"
-            "Both factory and wallet-direct paths rejected by eth_call — "
-            "the proxy may require a different execution path."
-        )
-        raise RuntimeError(f"Wallet-direct proxy() sim failed: {sim_exc!r}")
+    # Single-call data for execute() variant (only works when len(calls)==1)
+    single_to, single_data = calls[0]
 
-    tx_hash, receipt = await _send_tx(w3, acct, pk, proxy_addr, wdata, loop, gas=700_000)
-    if receipt.status != 1:
-        raise RuntimeError(f"Wallet-direct proxy() reverted: {tx_hash.hex()}")
-    return tx_hash.hex()
+    patterns = [
+        # label, target, calldata
+        ("factory.proxy(typeCode,to,value,data)",
+         factory_addr, factory_tc.encode_abi("proxy", args=[pcalls_tc])),
+        ("factory.proxy(to,value,data)",
+         factory_addr, factory_no_tc.encode_abi("proxy", args=[pcalls_no_tc])),
+        ("wallet.proxy(typeCode,to,value,data)",
+         proxy_addr, wallet_tc.encode_abi("proxy", args=[pcalls_tc])),
+        ("wallet.proxy(to,value,data)",
+         proxy_addr, wallet_no_tc.encode_abi("proxy", args=[pcalls_no_tc])),
+        ("wallet.execute(dest,value,func)",
+         proxy_addr,
+         wallet_exec.encode_abi("execute", args=[
+             w3.to_checksum_address(single_to), 0, bytes(single_data)
+         ])),
+    ]
+
+    for label, target, calldata in patterns:
+        try:
+            await loop.run_in_executor(
+                None, lambda t=target, d=calldata: w3.eth.call(
+                    {"from": acct.address, "to": t, "data": d}
+                )
+            )
+            log.info(f"[live] Sim OK ({label}) — submitting tx")
+            tx_hash, receipt = await _send_tx(w3, acct, pk, target, calldata, loop, gas=700_000)
+            if receipt.status != 1:
+                raise RuntimeError(f"{label} reverted on-chain: {tx_hash.hex()}")
+            return tx_hash.hex()
+        except RuntimeError:
+            raise  # on-chain revert — stop trying
+        except Exception as sim_exc:
+            log.warning(
+                f"[live] Sim FAILED ({label}): {_extract_revert_hex(sim_exc)}"
+            )
+
+    raise RuntimeError(
+        "All proxy execution patterns failed — check sim logs above for revert hex. "
+        "Confirm POLYGON_PRIVATE_KEY matches the wallet shown as 'owner' in the log."
+    )
 
 
 async def _redeem_position(

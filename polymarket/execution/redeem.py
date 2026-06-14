@@ -299,7 +299,7 @@ def _to_bytes(data) -> bytes:
     if isinstance(data, (bytes, bytearray)):
         return bytes(data)
     if isinstance(data, str):
-        return bytes.fromhex(data.lstrip("0x") if data.startswith("0x") else data)
+        return bytes.fromhex(data[2:] if data.startswith(("0x", "0X")) else data)
     return bytes(data)  # fallback: try bytes() constructor
 
 # ConditionalTokens (Gnosis CTF). redeemPositions burns the CALLER's own outcome
@@ -627,33 +627,13 @@ async def _execute_calls(w3, acct, pk: str, proxy: str, calls, loop) -> str:
         return last
 
     proxy_addr = w3.to_checksum_address(proxy)
-    safe = w3.eth.contract(address=proxy_addr, abi=_SAFE_ABI)
-    owners = None
-    try:
-        owners = await loop.run_in_executor(None, lambda: safe.functions.getOwners().call())
-    except Exception:
-        owners = None  # Not a Safe — use the 1proxy path
 
-    if owners is not None:
-        # 1-of-1 Safe pre-validated signature: {r = owner, s = 0, v = 1}
-        owner = acct.address
-        sig = bytes.fromhex(owner[2:].rjust(64, "0")) + ZERO_BYTES32 + b"\x01"
-        last = None
-        for to, data in calls:
-            exec_data = safe.encode_abi(
-                "execTransaction",
-                args=[w3.to_checksum_address(to), 0, data, 0,
-                      0, 0, 0, ZERO_ADDR, ZERO_ADDR, sig],
-            )
-            log.info(f"[live] Safe.execTransaction → {to[:10]}… (owners={len(owners)})")
-            tx_hash, receipt = await _send_tx(w3, acct, pk, proxy_addr, exec_data, loop)
-            if receipt.status != 1:
-                raise RuntimeError(f"Safe execTransaction reverted: {tx_hash.hex()}")
-            last = tx_hash.hex()
-        return last
-
-    # Confirmed by startup probe: wallet.forward(address,uint256,bytes) is the
-    # correct function on this Polymarket ProxyWallet (selector 0xd7f31eb9).
+    # Startup probe confirmed: wallet.forward(address,uint256,bytes) is the correct
+    # function for this Polymarket ProxyWallet (selector 0xd7f31eb9, match=True).
+    # The Gnosis Safe detection (getOwners) was incorrectly returning a non-empty
+    # list on the ProxyWallet (it has a function matching the ABI selector), which
+    # routed redemptions through execTransaction instead of forward() — causing the
+    # "registered owner does not match" revert. Skip Safe detection entirely.
     # All other patterns (proxy/execute) hit the fallback and revert with 0x1c8a498f.
     # Call forward() directly from the EOA — owner()==EOA so msg.sender==owner passes.
     single_to, single_data = calls[0]

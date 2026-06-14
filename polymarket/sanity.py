@@ -208,47 +208,75 @@ async def _check_ghost_positions(oracle: OracleBuffer) -> None:
 
 
 async def _lookup_condition_id(token_id: str, loop) -> str:
-    """Look up the Gnosis CTF conditionId for a Polymarket outcome token via Gamma API.
+    """Look up the Gnosis CTF conditionId for a Polymarket outcome token.
 
-    The Data API /positions endpoint sometimes returns non-hex IDs in its conditionId
-    field. The Gamma API /markets endpoint returns the real on-chain conditionId.
+    Tries three sources in order:
+    1. Gamma API /markets?clob_token_ids=<token_id>
+    2. Gamma API /markets?clobTokenId=<token_id>  (alternate param name)
+    3. CLOB API /markets?token_id=<token_id>  (fallback when Gamma returns bad data)
     """
+    import requests
+
+    def _valid_cid(cid: str) -> str:
+        """Return cid if it is exactly 64 valid hex chars (bytes32), else ''."""
+        if not cid:
+            return ""
+        stripped = str(cid).replace("0x", "").replace("0X", "").strip()
+        if len(stripped) != 64:
+            return ""
+        try:
+            bytes.fromhex(stripped)
+            return cid
+        except ValueError:
+            return ""
+
+    # 1 & 2 — Gamma API
+    for param in ("clob_token_ids", "clobTokenId"):
+        try:
+            resp = await loop.run_in_executor(
+                None,
+                lambda p=param: requests.get(
+                    "https://gamma-api.polymarket.com/markets",
+                    params={p: token_id},
+                    timeout=10,
+                ),
+            )
+            resp.raise_for_status()
+            markets = resp.json() or []
+            if markets:
+                raw = markets[0].get("conditionId") or markets[0].get("condition_id") or ""
+                cid = _valid_cid(str(raw))
+                if cid:
+                    log.info(f"[sanity] Gamma resolved conditionId for {token_id[:12]}…: {cid[:16]}…")
+                    return cid
+                elif raw:
+                    log.debug(f"[sanity] Gamma conditionId rejected (not 64 hex): {raw!r}")
+        except Exception as exc:
+            log.debug(f"[sanity] Gamma lookup ({param}) failed: {exc!r}")
+
+    # 3 — CLOB API fallback
     try:
         resp = await loop.run_in_executor(
             None,
-            lambda: __import__("requests").get(
-                "https://gamma-api.polymarket.com/markets",
-                params={"clob_token_ids": token_id},
+            lambda: requests.get(
+                "https://clob.polymarket.com/markets",
+                params={"token_id": token_id},
                 timeout=10,
             ),
         )
         resp.raise_for_status()
-        markets = resp.json() or []
-        if not markets:
-            # Try alternative field name
-            resp2 = await loop.run_in_executor(
-                None,
-                lambda: __import__("requests").get(
-                    "https://gamma-api.polymarket.com/markets",
-                    params={"clobTokenId": token_id},
-                    timeout=10,
-                ),
-            )
-            resp2.raise_for_status()
-            markets = resp2.json() or []
-        if markets:
-            cid = str(markets[0].get("conditionId") or markets[0].get("condition_id") or "")
-            if cid:
-                stripped = cid.replace("0x", "").replace("0X", "").strip()
-                if len(stripped) == 64:
-                    try:
-                        bytes.fromhex(stripped)
-                        log.info(f"[sanity] Gamma API resolved conditionId for token {token_id[:12]}…: {cid[:16]}…")
-                        return cid
-                    except ValueError:
-                        pass
+        data = resp.json() or {}
+        # CLOB returns {"market": {..., "condition_id": "0x..."}}
+        mkt = data.get("market") or data
+        raw = mkt.get("condition_id") or mkt.get("conditionId") or ""
+        cid = _valid_cid(str(raw))
+        if cid:
+            log.info(f"[sanity] CLOB API resolved conditionId for {token_id[:12]}…: {cid[:16]}…")
+            return cid
     except Exception as exc:
-        log.warning(f"[sanity] Gamma conditionId lookup failed for {token_id[:12]}…: {exc!r}")
+        log.debug(f"[sanity] CLOB conditionId lookup failed: {exc!r}")
+
+    log.warning(f"[sanity] All conditionId lookups failed for token {token_id[:12]}…")
     return ""
 
 

@@ -148,8 +148,23 @@ async def startup_position_sync(oracle: OracleBuffer) -> None:
 
 
 async def _gamma_condition_id(token_id: str, loop) -> str:
-    """Fetch conditionId from Gamma API given an outcome token ID."""
+    """Fetch conditionId from Gamma or CLOB API given an outcome token ID.
+
+    Tries Gamma API first (two param variants), then falls back to CLOB API.
+    Accepts only exactly 64 valid hex chars (bytes32).
+    """
     import requests
+
+    def _valid(cid: str) -> str:
+        s = str(cid).replace("0x", "").replace("0X", "").strip()
+        if len(s) != 64:
+            return ""
+        try:
+            bytes.fromhex(s)
+            return cid
+        except ValueError:
+            return ""
+
     for param in ("clob_token_ids", "clobTokenId"):
         try:
             resp = await loop.run_in_executor(
@@ -163,24 +178,37 @@ async def _gamma_condition_id(token_id: str, loop) -> str:
             resp.raise_for_status()
             markets = resp.json() or []
             if markets:
-                cid = str(
-                    markets[0].get("conditionId")
-                    or markets[0].get("condition_id")
-                    or ""
-                )
+                raw = markets[0].get("conditionId") or markets[0].get("condition_id") or ""
+                cid = _valid(str(raw))
                 if cid:
-                    stripped = cid.replace("0x", "").replace("0X", "").strip()
-                    if len(stripped) == 64:
-                        try:
-                            bytes.fromhex(stripped)
-                            log.info(
-                                f"[startup_sync] Gamma conditionId for {token_id[:12]}…: {cid[:16]}…"
-                            )
-                            return cid
-                        except ValueError:
-                            pass
+                    log.info(f"[startup_sync] Gamma conditionId for {token_id[:12]}…: {cid[:16]}…")
+                    return cid
+                elif raw:
+                    log.debug(f"[startup_sync] Gamma conditionId rejected (not 64 hex): {raw!r}")
         except Exception as exc:
             log.debug(f"[startup_sync] Gamma lookup ({param}) failed: {exc!r}")
+
+    # CLOB API fallback
+    try:
+        resp = await loop.run_in_executor(
+            None,
+            lambda: requests.get(
+                "https://clob.polymarket.com/markets",
+                params={"token_id": token_id},
+                timeout=10,
+            ),
+        )
+        resp.raise_for_status()
+        data = resp.json() or {}
+        mkt = data.get("market") or data
+        raw = mkt.get("condition_id") or mkt.get("conditionId") or ""
+        cid = _valid(str(raw))
+        if cid:
+            log.info(f"[startup_sync] CLOB conditionId for {token_id[:12]}…: {cid[:16]}…")
+            return cid
+    except Exception as exc:
+        log.debug(f"[startup_sync] CLOB lookup failed: {exc!r}")
+
     return ""
 
 

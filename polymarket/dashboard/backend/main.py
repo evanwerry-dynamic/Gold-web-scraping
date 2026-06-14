@@ -133,6 +133,7 @@ async def halt():
     if oracle is None:
         return JSONResponse({"error": "bot not running"}, status_code=503)
     oracle.emergency_halt = True
+    oracle.halt_source = "manual"  # never auto-cleared by sanity_loop
     log.warning("EMERGENCY HALT ACTIVATED via dashboard")
     # Best-effort cancel all live CLOB orders
     if not oracle.paper_trading:
@@ -154,6 +155,7 @@ async def resume():
     if oracle is None:
         return JSONResponse({"error": "bot not running"}, status_code=503)
     oracle.emergency_halt = False
+    oracle.halt_source = ""
     log.info("Trading resumed via dashboard")
     return JSONResponse({"halted": False})
 

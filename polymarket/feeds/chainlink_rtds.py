@@ -136,32 +136,41 @@ async def _resolve_market_positions(oracle: OracleBuffer, market_id: str, loop) 
         if pos.resolved or pos.market_id != market_id:
             continue
 
-        if outcome is not None:
-            # Gamma returned definitive result
-            btc_went_up = outcome
-        elif pos.window_open_price > 0:
-            # M2: only use BTC price fallback within 60s of expected window end.
-            # After 60s with no Gamma outcome, mark LOST (conservative).
-            # We estimate window end from market_id if it's a paper market, or
-            # use a 60s grace from the time we tried to resolve.
-            secs_since_resolve_attempt = time.time() - (pos.window_open_price and pos.window_open_price or time.time())
-            # Use BTC price comparison if we can't determine how old the position is
-            btc_went_up = oracle.btc_price >= pos.window_open_price
-            log.warning(
-                f"[resolve-orphan] {market_id}: Gamma outcome unknown, "
-                f"using BTC {pos.window_open_price:.2f}→{oracle.btc_price:.2f}"
-            )
-        else:
-            # No data available — mark as LOST (conservative)
-            log.warning(f"[resolve-orphan] {market_id}: no outcome data, marking LOST")
-            btc_went_up = False
-
         bet_up = pos.side in ("UP", "YES")
         bet_down = pos.side in ("DOWN", "NO")
+
+        if outcome is not None:
+            # Gamma returned a definitive result.
+            btc_went_up = outcome
+        elif market_id.startswith("paper-") and pos.window_open_price > 0:
+            # Paper markets have no Gamma outcome — price comparison is the
+            # intended resolver for the synthetic window.
+            btc_went_up = oracle.btc_price >= pos.window_open_price
+            log.warning(
+                f"[resolve-orphan] paper {market_id}: BTC "
+                f"{pos.window_open_price:.2f}→{oracle.btc_price:.2f}"
+            )
+        else:
+            # Live orphan with no Gamma outcome: do NOT guess from the CURRENT
+            # price — it has no relation to where this old window actually closed
+            # (this previously resolved hours-old positions essentially at random).
+            # Mark LOST conservatively. Any genuinely-held winning tokens are
+            # caught and redeemed by the on-chain ghost reconciliation
+            # (startup_position_sync / sanity), which reads the real ERC-1155
+            # balance instead of guessing — so a real win is never abandoned, and
+            # we never fabricate a win that credits non-existent bankroll.
+            log.warning(
+                f"[resolve-orphan] {market_id}: no Gamma outcome — marking LOST "
+                "(conservative; on-chain ghost check will redeem if truly held)"
+            )
+            btc_went_up = None
+
         if not bet_up and not bet_down:
             # Legacy "BUY" side — cannot determine direction; mark LOST (conservative)
             log.warning(f"[resolve-orphan] {market_id}: side={pos.side!r} is ambiguous — marking LOST")
             won = False
+        elif btc_went_up is None:
+            won = False  # conservative LOST when outcome is unknown
         else:
             won = bet_up == btc_went_up
         pos.resolution       = 1.0 if won else 0.0

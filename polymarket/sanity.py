@@ -48,9 +48,14 @@ async def sanity_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
         # Gas and allowance checks only apply to live trading — paper mode
         # has no wallet, so these would always fire false CRITICAL alerts.
         if not oracle.paper_trading:
-            await _check_gas(oracle)
-            await _check_pusd_allowance(oracle)
-            await _check_bankroll_vs_chain(oracle)
+            # Each check returns True when it requires a halt. We aggregate so the
+            # halt can be AUTO-CLEARED once every recoverable condition is healthy
+            # again — a transient low-gas/RPC blip must not halt trading forever.
+            halt_needed = False
+            halt_needed |= await _check_gas(oracle)
+            halt_needed |= await _check_pusd_allowance(oracle)
+            halt_needed |= await _check_bankroll_vs_chain(oracle)
+            _apply_halt_decision(oracle, halt_needed)
         _check_ws_freshness(oracle)
 
         # Midnight daily reset — allows trading to resume after a daily loss halt
@@ -180,19 +185,30 @@ async def _check_ghost_positions(oracle: OracleBuffer) -> None:
                         f"[sanity] Attempting ghost redemption: "
                         f"condition={condition_id[:16]}… payout≈{payout:.2f}"
                     )
-                    await _redeem_position(
+                    redeemed_ok = await _redeem_position(
                         condition_id=condition_id,
                         token_id=token_id,
                         shares=payout,
                         side=side,
                         paper=False,
                     )
-                    async with oracle.bankroll_lock:
-                        oracle.bankroll += payout
-                    log.info(
-                        f"[sanity] Ghost redemption succeeded: +{payout:.2f} → bankroll "
-                        f"now {oracle.bankroll:.2f}"
-                    )
+                    # PHANTOM LOCKDOWN: only credit when tokens were actually
+                    # burned on-chain. _redeem_position returns False when the
+                    # holder owns no tokens (already settled / mis-detected) — in
+                    # that case crediting would invent money with no on-chain
+                    # backing (and could double-credit with startup_position_sync).
+                    if redeemed_ok:
+                        async with oracle.bankroll_lock:
+                            oracle.bankroll += payout
+                        log.info(
+                            f"[sanity] Ghost redemption succeeded: +{payout:.2f} → bankroll "
+                            f"now {oracle.bankroll:.2f}"
+                        )
+                    else:
+                        log.info(
+                            f"[sanity] Ghost {condition_id[:16]}… had no on-chain tokens "
+                            "— nothing redeemed, bankroll unchanged"
+                        )
                 except Exception as redeem_exc:
                     log.warning(
                         f"[sanity] Ghost redemption failed for {condition_id[:16]}…: "
@@ -280,22 +296,42 @@ async def _lookup_condition_id(token_id: str, loop) -> str:
     return ""
 
 
-async def _check_gas(oracle: OracleBuffer) -> None:
+def _apply_halt_decision(oracle: OracleBuffer, halt_needed: bool) -> None:
+    """Engage or auto-clear the emergency halt based on the aggregated checks.
+
+    Only halts that sanity itself engaged ("sanity") are auto-cleared — a manual
+    dashboard halt ("manual") is left untouched so an operator's kill switch is
+    never silently lifted by a transient condition recovering.
+    """
+    if halt_needed:
+        if not oracle.emergency_halt:
+            oracle.emergency_halt = True
+            oracle.halt_source = "sanity"
+            log.critical("[sanity] Emergency halt ENGAGED (recoverable condition)")
+    else:
+        if oracle.emergency_halt and oracle.halt_source == "sanity":
+            oracle.emergency_halt = False
+            oracle.halt_source = ""
+            log.warning("[sanity] Recoverable conditions healthy — emergency halt CLEARED")
+
+
+async def _check_gas(oracle: OracleBuffer) -> bool:
+    """Return True if gas is too low to operate (halt required)."""
     try:
         matic = await get_matic_balance()
     except Exception as exc:
         log.warning(f"Gas check skipped — RPC unreachable: {exc!r}")
-        return
+        return False  # RPC blip — don't halt on a reading we couldn't take
     if matic < MIN_MATIC:
         log.critical(
             f"LOW GAS: {matic:.4f} POL — transactions will fail. Replenish immediately."
         )
-        oracle.emergency_halt = True
-    else:
-        log.debug(f"Gas OK: {matic:.4f} POL")
+        return True
+    log.debug(f"Gas OK: {matic:.4f} POL")
+    return False
 
 
-async def _check_pusd_allowance(oracle: OracleBuffer) -> None:
+async def _check_pusd_allowance(oracle: OracleBuffer) -> bool:
     # Check the CTF Exchange allowance (not balance — balance is checked by
     # _check_bankroll_vs_chain). Allowance is set to max_uint256 by setup_approvals.py
     # so this should virtually never fire; it's a backstop for manual revokes.
@@ -303,7 +339,7 @@ async def _check_pusd_allowance(oracle: OracleBuffer) -> None:
         allowance = await get_pusd_allowance()
     except Exception as exc:
         log.warning(f"pUSD allowance check skipped — RPC unreachable: {exc!r}")
-        return
+        return False
     if allowance < oracle.bankroll * 0.5 and oracle.bankroll > 0:
         log.warning(
             f"pUSD allowance low ({allowance:.2f} < {oracle.bankroll * 0.5:.2f}) "
@@ -314,17 +350,18 @@ async def _check_pusd_allowance(oracle: OracleBuffer) -> None:
             allowance_after = await get_pusd_allowance()
         except Exception as exc:
             log.warning(f"pUSD re-approve skipped — RPC unreachable: {exc!r}")
-            return
+            return False
         if allowance_after < oracle.bankroll * 0.5:
             log.critical(
                 f"pUSD re-approve failed: allowance still {allowance_after:.2f} "
                 f"< required {oracle.bankroll * 0.5:.2f} — halting trading"
             )
-            oracle.emergency_halt = True
+            return True
     log.debug(f"pUSD allowance: {allowance:.2f}")
+    return False
 
 
-async def _check_bankroll_vs_chain(oracle: OracleBuffer) -> None:
+async def _check_bankroll_vs_chain(oracle: OracleBuffer) -> bool:
     """Reconcile oracle.bankroll against on-chain collateral (pUSD + USDC.e).
 
     Redemptions pay out USDC.e while trading uses pUSD, so both are counted —
@@ -332,22 +369,27 @@ async def _check_bankroll_vs_chain(oracle: OracleBuffer) -> None:
     """
     import os
     if os.getenv("PAPER_TRADING", "true").lower() == "true":
-        return  # Nothing to reconcile in paper mode
+        return False  # Nothing to reconcile in paper mode
 
     try:
         chain_balance = await get_collateral_balance()
+        # A reading of exactly 0 while we believe we hold funds is almost always
+        # an RPC error, not a real drain — don't halt on it.
+        if chain_balance <= 0 and oracle.bankroll > 0:
+            log.warning("Bankroll reconciliation: chain balance read as 0 — treating as RPC blip, not halting")
+            return False
         if oracle.bankroll > 0 and chain_balance < oracle.bankroll * 0.8:
             log.critical(
                 f"BANKROLL MISMATCH: on-chain collateral={chain_balance:.2f} is more than 20% "
                 f"below oracle.bankroll={oracle.bankroll:.2f} — halting trading"
             )
-            oracle.emergency_halt = True
-        else:
-            log.debug(
-                f"Bankroll reconciled: chain={chain_balance:.2f}, oracle={oracle.bankroll:.2f}"
-            )
+            return True
+        log.debug(
+            f"Bankroll reconciled: chain={chain_balance:.2f}, oracle={oracle.bankroll:.2f}"
+        )
     except Exception as exc:
         log.warning(f"Bankroll reconciliation failed: {exc!r}")
+    return False
 
 
 def _check_ws_freshness(oracle: OracleBuffer) -> None:

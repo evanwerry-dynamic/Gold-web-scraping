@@ -116,6 +116,10 @@ class OracleBuffer:
 
     # Emergency halt flag — set by sanity_loop on critical conditions
     emergency_halt: bool = False
+    # Who engaged the halt: "" (none), "sanity" (auto, recoverable), or "manual"
+    # (dashboard). sanity_loop only auto-clears halts it engaged itself, so a
+    # manual halt is never silently lifted by a transient condition recovering.
+    halt_source: str = ""
 
     # Strategy parameters updated by calibrator at runtime (H3)
     strategy_config: dict = field(default_factory=lambda: {

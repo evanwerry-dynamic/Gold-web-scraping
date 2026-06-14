@@ -24,9 +24,113 @@ log = logging.getLogger(__name__)
 REDEEM_INTERVAL = 30.0
 
 
+async def _probe_proxy_at_startup() -> None:
+    """One-time startup diagnostic — no position needed.
+
+    Checks who the proxy wallet thinks its owner is, and probes each of the 5
+    proxy execution patterns with a cheap no-op call so Railway logs show WHICH
+    pattern will work for real redemptions before the next win arrives.
+    """
+    await asyncio.sleep(5)  # Let the rest of the startup settle first
+    try:
+        from polymarket.execution.wallet import (
+            PROXY_WALLET_FACTORY, CONDITIONAL_TOKENS, get_web3,
+        )
+        pk = os.getenv("POLYGON_PRIVATE_KEY", "")
+        proxy = (
+            os.getenv("POLY_PROXY_ADDRESS", "").strip()
+            or os.getenv("POLY_ADDRESS", "").strip()
+        )
+        if not pk or not proxy:
+            log.info("[probe] Skipping proxy probe — POLYGON_PRIVATE_KEY or POLY_PROXY_ADDRESS not set")
+            return
+
+        loop = asyncio.get_running_loop()
+        w3 = get_web3()
+        acct = w3.eth.account.from_key(pk)
+        proxy_addr = w3.to_checksum_address(proxy)
+        factory_addr = w3.to_checksum_address(PROXY_WALLET_FACTORY)
+        ct_addr = w3.to_checksum_address(CONDITIONAL_TOKENS)
+
+        # 1. Check proxy.owner()
+        try:
+            owner_contract = w3.eth.contract(address=proxy_addr, abi=_OWNER_VIEW_ABI)
+            wallet_owner = await loop.run_in_executor(
+                None, lambda: owner_contract.functions.owner().call()
+            )
+            match = wallet_owner.lower() == acct.address.lower()
+            log.info(
+                f"[probe] proxy.owner() = {wallet_owner} | "
+                f"EOA = {acct.address} | match = {match}"
+            )
+            if not match:
+                log.warning(
+                    "[probe] KEY MISMATCH — proxy wallet's registered owner is NOT our EOA. "
+                    "On-chain redemption will fail until POLYGON_PRIVATE_KEY matches "
+                    f"the owner address ({wallet_owner})."
+                )
+        except Exception as exc:
+            log.warning(f"[probe] proxy.owner() failed: {_extract_revert_hex(exc)}")
+
+        # 2. Build a cheap no-op read call (CT.payoutDenominator on zeroed conditionId)
+        ct = w3.eth.contract(address=ct_addr, abi=_CT_ABI)
+        noop_data = bytes(ct.encode_abi("payoutDenominator", args=[ZERO_BYTES32]))
+
+        factory_tc = w3.eth.contract(address=factory_addr, abi=_ONE_PROXY_ABI)
+        factory_no_tc = w3.eth.contract(address=factory_addr, abi=_ONE_PROXY_NO_TC_ABI)
+        wallet_tc = w3.eth.contract(address=proxy_addr, abi=_ONE_PROXY_ABI)
+        wallet_no_tc = w3.eth.contract(address=proxy_addr, abi=_ONE_PROXY_NO_TC_ABI)
+        wallet_exec = w3.eth.contract(address=proxy_addr, abi=_EXECUTE_ABI)
+
+        pcalls_tc = [(0, ct_addr, 0, noop_data)]
+        pcalls_no_tc = [(ct_addr, 0, noop_data)]
+
+        patterns = [
+            ("factory.proxy(typeCode,to,value,data)",
+             factory_addr, factory_tc.encode_abi("proxy", args=[pcalls_tc])),
+            ("factory.proxy(to,value,data)",
+             factory_addr, factory_no_tc.encode_abi("proxy", args=[pcalls_no_tc])),
+            ("wallet.proxy(typeCode,to,value,data)",
+             proxy_addr, wallet_tc.encode_abi("proxy", args=[pcalls_tc])),
+            ("wallet.proxy(to,value,data)",
+             proxy_addr, wallet_no_tc.encode_abi("proxy", args=[pcalls_no_tc])),
+            ("wallet.execute(dest,value,func)",
+             proxy_addr, wallet_exec.encode_abi("execute", args=[ct_addr, 0, noop_data])),
+        ]
+
+        found = False
+        for label, target, calldata in patterns:
+            try:
+                await loop.run_in_executor(
+                    None, lambda t=target, d=calldata: w3.eth.call(
+                        {"from": acct.address, "to": t, "data": d}
+                    )
+                )
+                log.info(f"[probe] WORKING PATTERN: {label} ← will use this for redemptions")
+                found = True
+            except Exception as exc:
+                log.info(f"[probe] pattern failed ({label}): {_extract_revert_hex(exc)}")
+
+        if not found:
+            log.warning(
+                "[probe] ALL 5 proxy patterns fail eth_call — redemption will not work "
+                "until the correct proxy ABI is identified. "
+                "Share the '[probe] pattern failed' lines above to diagnose."
+            )
+    except Exception as exc:
+        log.warning(f"[probe] Proxy startup probe failed: {exc!r}")
+
+
 async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = None) -> None:
     """Claim resolved ERC-1155 positions for pUSD. Never exits."""
-    log.info("Redemption loop starting [build: redeem-v9 multi-abi probe + owner diag + revert hex]...")
+    log.info("Redemption loop starting [build: redeem-v10 startup proxy probe]...")
+
+    # Run a one-time startup probe so we know which proxy call pattern works
+    # without waiting for a real position to redeem. This logs proxy.owner()
+    # and which of the 5 ABI variants passes eth_call simulation.
+    if not oracle.paper_trading:
+        asyncio.get_running_loop().create_task(_probe_proxy_at_startup())
+
     while True:
         await asyncio.sleep(REDEEM_INTERVAL)
 

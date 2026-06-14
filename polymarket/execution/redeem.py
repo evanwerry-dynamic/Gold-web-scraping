@@ -725,17 +725,18 @@ async def _redeem_position(
         w3, ct, holder, cid_bytes, [USDCE_ADDRESS, PUSD_ADDRESS], loop
     )
     if collateral is None:
-        log.warning(
-            f"[live] No outcome-token balance for {condition_id[:16]}… at holder "
-            f"{holder[:10]}… — already redeemed on-chain, or held elsewhere. "
-            "Attempting USDC.e redemption anyway."
-        )
-        collateral = USDCE_ADDRESS
-    else:
+        # Balance is 0 for all (collateral, indexSet) combinations.
+        # The position has likely already been redeemed on-chain (manually or
+        # by Polymarket's auto-settlement). Nothing to burn; skip quietly.
         log.info(
-            f"[live] Holder {holder[:10]}… owns {bal} units "
-            f"(collateral={collateral[:10]}…, idx={idx})"
+            f"[live] No outcome-token balance for {condition_id[:16]}… at "
+            f"{holder[:10]}… — already redeemed or not held here. Skipping."
         )
+        return
+    log.info(
+        f"[live] Holder {holder[:10]}… owns {bal} units "
+        f"(collateral={collateral[:10]}…, idx={idx})"
+    )
 
     # Diagnostics: a winning bet only redeems once the on-chain oracle has
     # reported the condition. payoutDenominator==0 means resolution hasn't hit the

@@ -102,6 +102,18 @@ async def _check_ghost_positions(oracle: OracleBuffer) -> None:
         )
         resp.raise_for_status()
         actual = resp.json() or []
+        # Log the full raw response once so we can see exactly what the Data API returns
+        if actual:
+            log.info(f"[sanity] Data API position fields: {list(actual[0].keys())}")
+            for p in actual:
+                tok = str(p.get("asset") or p.get("tokenId") or "?")
+                log.info(
+                    f"[sanity] Raw position: token={tok[:12]}… "
+                    f"conditionId={p.get('conditionId')!r} "
+                    f"condition={p.get('condition')!r} "
+                    f"questionId={p.get('questionId')!r} "
+                    f"size={p.get('size')!r} outcome={p.get('outcome')!r}"
+                )
         tracked_tokens = {p.token_id for p in oracle.open_positions.values()}
         for pos_data in actual:
             token_id = str(pos_data.get("asset") or pos_data.get("tokenId") or "")

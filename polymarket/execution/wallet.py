@@ -55,10 +55,35 @@ def get_web3():
         try:
             w3 = Web3(Web3.HTTPProvider(url, request_kwargs={"timeout": 10}))
             if w3.is_connected():
+                _inject_poa_middleware(w3)
                 return w3
         except Exception:
             continue
     raise RuntimeError("Cannot connect to any Polygon RPC")
+
+
+def _inject_poa_middleware(w3) -> None:
+    """Inject POA middleware so get_block works on Polygon (Bor is a PoA chain).
+
+    Polygon blocks carry an extraData field longer than 32 bytes, which web3.py
+    rejects with ExtraDataLengthError unless this middleware is layered in.
+    The class moved/renamed across web3.py versions, so try both names.
+    """
+    try:
+        from web3.middleware import ExtraDataToPOAMiddleware  # web3.py v7+
+        middleware = ExtraDataToPOAMiddleware
+    except ImportError:
+        try:
+            from web3.middleware import geth_poa_middleware  # web3.py v5/v6
+            middleware = geth_poa_middleware
+        except ImportError:
+            return  # No POA middleware available — block reads may fail
+    try:
+        if middleware not in w3.middleware_onion:
+            w3.middleware_onion.inject(middleware, layer=0)
+    except Exception:
+        # inject is idempotent-unsafe across versions; ignore double-inject errors
+        pass
 
 
 _CTF_ABI = [

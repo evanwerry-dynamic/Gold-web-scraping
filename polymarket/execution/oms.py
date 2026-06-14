@@ -313,14 +313,24 @@ async def _register_balance_allowance() -> None:
         client = get_clob_client()
         loop = asyncio.get_running_loop()
 
-        # First check current state so we can see what the CLOB knows about us.
+        # CLOB V2 requires explicit asset_type=COLLATERAL for balance/allowance calls.
+        # Fall back to no-args if the import or signature differs.
         try:
-            current = await loop.run_in_executor(None, client.get_balance_allowance)
+            from py_clob_client_v2.clob_types import AssetType, BalanceAllowanceParams
+            params = BalanceAllowanceParams(asset_type=AssetType.COLLATERAL)
+            _get_bal = lambda: client.get_balance_allowance(params)
+            _upd_bal = lambda: client.update_balance_allowance(params)
+        except (ImportError, TypeError, Exception):
+            _get_bal = client.get_balance_allowance
+            _upd_bal = client.update_balance_allowance
+
+        try:
+            current = await loop.run_in_executor(None, _get_bal)
             log.info(f"[OMS] CLOB balance/allowance (before update): {current}")
         except Exception as exc:
             log.warning(f"[OMS] get_balance_allowance failed: {exc!r}")
 
-        result = await loop.run_in_executor(None, client.update_balance_allowance)
+        result = await loop.run_in_executor(None, _upd_bal)
         log.info(f"[OMS] Balance/allowance synced with CLOB: {result}")
     except Exception as exc:
         log.warning(f"[OMS] Balance/allowance sync failed: {exc!r}")

@@ -74,7 +74,7 @@ async def _probe_proxy_at_startup() -> None:
 
         # 2. Build a cheap no-op read call (CT.payoutDenominator on zeroed conditionId)
         ct = w3.eth.contract(address=ct_addr, abi=_CT_ABI)
-        noop_data = bytes(ct.encode_abi("payoutDenominator", args=[ZERO_BYTES32]))
+        noop_data = _to_bytes(ct.encode_abi("payoutDenominator", args=[ZERO_BYTES32]))
 
         factory_tc = w3.eth.contract(address=factory_addr, abi=_ONE_PROXY_ABI)
         factory_no_tc = w3.eth.contract(address=factory_addr, abi=_ONE_PROXY_NO_TC_ABI)
@@ -231,6 +231,20 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
 
 ZERO_ADDR = "0x0000000000000000000000000000000000000000"
 ZERO_BYTES32 = b"\x00" * 32
+
+
+def _to_bytes(data) -> bytes:
+    """Normalise web3.py ABI-encoded output to plain bytes.
+
+    web3.py v7 returns a hex string from encode_abi(); earlier versions returned
+    HexBytes (a bytes subclass). Both forms are handled so the code works across
+    versions without version-pinning.
+    """
+    if isinstance(data, (bytes, bytearray)):
+        return bytes(data)
+    if isinstance(data, str):
+        return bytes.fromhex(data.lstrip("0x") if data.startswith("0x") else data)
+    return bytes(data)  # fallback: try bytes() constructor
 
 # ConditionalTokens (Gnosis CTF). redeemPositions burns the CALLER's own outcome
 # tokens and pays the collateral to the caller — no setApprovalForAll required.
@@ -561,8 +575,8 @@ async def _execute_calls(w3, acct, pk: str, proxy: str, calls, loop) -> str:
         log.warning(f"[live] proxy.owner() call failed: {exc!r}")
 
     # Build call lists for both struct variants (with and without typeCode).
-    pcalls_tc = [(0, w3.to_checksum_address(to), 0, bytes(data)) for to, data in calls]
-    pcalls_no_tc = [(w3.to_checksum_address(to), 0, bytes(data)) for to, data in calls]
+    pcalls_tc = [(0, w3.to_checksum_address(to), 0, _to_bytes(data)) for to, data in calls]
+    pcalls_no_tc = [(w3.to_checksum_address(to), 0, _to_bytes(data)) for to, data in calls]
 
     factory_tc = w3.eth.contract(address=factory_addr, abi=_ONE_PROXY_ABI)
     factory_no_tc = w3.eth.contract(address=factory_addr, abi=_ONE_PROXY_NO_TC_ABI)
@@ -586,7 +600,7 @@ async def _execute_calls(w3, acct, pk: str, proxy: str, calls, loop) -> str:
         ("wallet.execute(dest,value,func)",
          proxy_addr,
          wallet_exec.encode_abi("execute", args=[
-             w3.to_checksum_address(single_to), 0, bytes(single_data)
+             w3.to_checksum_address(single_to), 0, _to_bytes(single_data)
          ])),
     ]
 

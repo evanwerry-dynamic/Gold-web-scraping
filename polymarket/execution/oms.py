@@ -388,7 +388,21 @@ async def _submit_to_clob(intent: dict, order_id: str) -> dict:
                 None, lambda: client.post_order(signed, OrderType.GTC, post_only=post_only)
             )
 
-        return resp or {"orderID": order_id, "status": "submitted"}
+        # Never substitute a local ID for a real CLOB ID. An empty/None response
+        # means the order may or may not be live — we cannot track or cancel it.
+        # Raise so the caller logs it as a submission failure rather than silently
+        # proceeding with a fake ID that will never match a CLOB fill event.
+        if not resp:
+            raise RuntimeError(
+                f"CLOB post_order returned empty response for {order_type_str} on "
+                f"token {token_id[:16]}... — order status unknown"
+            )
+        clob_id = resp.get("orderID") or resp.get("id")
+        if not clob_id:
+            raise RuntimeError(
+                f"CLOB response missing orderID field: {resp!r}"
+            )
+        return resp
 
     except (ImportError, AttributeError) as exc:
         raise RuntimeError(
@@ -406,12 +420,19 @@ async def _track_until_terminal(
     """Poll order status until filled, cancelled, or timed out."""
     from polymarket.execution.wallet import get_clob_client
     from polymarket.data import append_trade
+    from polymarket.fair_value import dynamic_taker_fee
 
     tracked_id = resp.get("orderID") or resp.get("id") or "unknown"
     client = get_clob_client()
     loop = asyncio.get_running_loop()
-    timeout = FOK_TIMEOUT if intent.get("order_type") == "FOK" else GTC_TIMEOUT
+    is_fok = intent.get("order_type") == "FOK"
+    timeout = FOK_TIMEOUT if is_fok else GTC_TIMEOUT
     deadline = time.time() + timeout
+    # For partial-fill detection on GTC orders, track expected size
+    original_size = float(
+        intent.get("shares")
+        or (intent.get("dollar_size", 0) / max(intent.get("price", 1.0), 0.01))
+    )
 
     consecutive_poll_failures = 0
     while time.time() < deadline:
@@ -426,21 +447,42 @@ async def _track_until_terminal(
                 if tracked_id in _filled_order_ids:
                     log.warning(f"[OMS] Skipping already-debited order: {tracked_id}")
                     return
-                _filled_order_ids.append(tracked_id)
+                # C2: only accept as terminal if size_matched is present in the
+                # response. Never fall back to intent shares — if the exchange
+                # doesn't tell us how much was matched, we don't know the cost.
+                raw_matched = order.get("size_matched") or order.get("sizeMatched")
+                if raw_matched is None:
+                    log.critical(
+                        f"[OMS/live] CLOB reported {status} for {tracked_id} but "
+                        f"returned no size_matched — cannot account fill. "
+                        f"Treating as incomplete, will keep polling or cancel."
+                    )
+                    continue  # Stay in the poll loop; don't mark as done
+                shares = float(raw_matched)
+                if shares <= 0:
+                    log.warning(f"[OMS/live] {status} with size_matched=0 for {tracked_id} — skipping")
+                    oracle.strategy_phase = "HOLD"
+                    return
 
+                # C2: GTC partial fill — keep polling until fully filled or timeout
+                if not is_fok and shares < original_size * 0.99:
+                    log.info(
+                        f"[OMS/live] Partial fill {tracked_id}: {shares:.2f}/{original_size:.2f} "
+                        f"shares — continuing to poll"
+                    )
+                    continue
+
+                _filled_order_ids.append(tracked_id)
                 fill_price = float(
                     order.get("price")
                     or order.get("avgPrice")
                     or intent["price"]
                 )
-                shares = float(
-                    order.get("size_matched")
-                    or order.get("sizeMatched")
-                    or order.get("original_size")
-                    or order.get("size")
-                    or intent.get("shares", 0)
-                )
                 dollar_size = shares * fill_price
+                # C3: include taker fee in bankroll debit so the ledger matches
+                # what the CLOB actually charges at settlement.
+                taker_fee = dynamic_taker_fee(fill_price) * dollar_size
+                total_cost = dollar_size + taker_fee
 
                 pos = OpenPosition(
                     market_id=intent["market_id"],
@@ -453,8 +495,18 @@ async def _track_until_terminal(
                     strategy=intent.get("strategy", "A"),
                 )
                 async with oracle.bankroll_lock:
+                    # C3: over-commit guard — reject if the fill would over-draw
+                    if total_cost > oracle.bankroll:
+                        log.critical(
+                            f"[OMS/live] Fill would over-draw bankroll: "
+                            f"need ${total_cost:.2f} (fill ${dollar_size:.2f} + "
+                            f"fee ${taker_fee:.3f}), have ${oracle.bankroll:.2f}. "
+                            f"Order {tracked_id} NOT recorded — manual reconciliation needed."
+                        )
+                        oracle.strategy_phase = "HOLD"
+                        return
                     oracle.open_positions[tracked_id] = pos
-                    oracle.bankroll -= dollar_size
+                    oracle.bankroll -= total_cost
 
                 live_record = {
                     "order_id": tracked_id,
@@ -466,12 +518,14 @@ async def _track_until_terminal(
                     "edge": intent.get("edge"),
                     "shares": shares,
                     "dollar_size": dollar_size,
+                    "taker_fee": round(taker_fee, 4),
                     "paper": False,
                 }
                 await loop.run_in_executor(None, append_trade, live_record)
                 log.info(
                     f"[OMS/live] Filled: {tracked_id} "
-                    f"{shares:.2f}sh @ {fill_price:.3f}"
+                    f"{shares:.2f}sh @ {fill_price:.3f} "
+                    f"(fee ${taker_fee:.3f}, total cost ${total_cost:.2f})"
                 )
                 oracle.strategy_phase = "HOLD"
                 return
@@ -512,34 +566,43 @@ async def _track_until_terminal(
             order = await loop.run_in_executor(None, client.get_order, tracked_id)
             status = (order.get("status") or "").lower()
             if status in ("matched", "filled") and tracked_id not in _filled_order_ids:
-                _filled_order_ids.append(tracked_id)
-                fill_price = float(
-                    order.get("price")
-                    or order.get("avgPrice")
-                    or intent.get("price", 0)
-                )
-                shares = float(
-                    order.get("size_matched")
-                    or order.get("sizeMatched")
-                    or order.get("original_size")
-                    or order.get("size")
-                    or intent.get("shares", 0)
-                )
-                dollar_size = shares * fill_price
-                pos = OpenPosition(
-                    market_id=intent["market_id"],
-                    condition_id=intent["condition_id"],
-                    token_id=intent["token_id"],
-                    side=intent.get("side", "YES"),
-                    shares=shares,
-                    cost_basis=dollar_size,
-                    window_open_price=intent.get("window_open_price", 0.0),
-                    strategy=intent.get("strategy", "A"),
-                )
-                async with oracle.bankroll_lock:
-                    oracle.open_positions[tracked_id] = pos
-                    oracle.bankroll -= dollar_size
-                log.warning(f"[OMS] Late fill detected after cancel failure: {tracked_id}")
+                raw_matched = order.get("size_matched") or order.get("sizeMatched")
+                if raw_matched is None:
+                    log.critical(
+                        f"[OMS/live] Late fill for {tracked_id} has no size_matched — skipping"
+                    )
+                else:
+                    shares = float(raw_matched)
+                    _filled_order_ids.append(tracked_id)
+                    fill_price = float(
+                        order.get("price") or order.get("avgPrice") or intent.get("price", 0)
+                    )
+                    dollar_size = shares * fill_price
+                    taker_fee = dynamic_taker_fee(fill_price) * dollar_size
+                    total_cost = dollar_size + taker_fee
+                    pos = OpenPosition(
+                        market_id=intent["market_id"],
+                        condition_id=intent["condition_id"],
+                        token_id=intent["token_id"],
+                        side=intent.get("side", "YES"),
+                        shares=shares,
+                        cost_basis=dollar_size,
+                        window_open_price=intent.get("window_open_price", 0.0),
+                        strategy=intent.get("strategy", "A"),
+                    )
+                    async with oracle.bankroll_lock:
+                        if total_cost > oracle.bankroll:
+                            log.critical(
+                                f"[OMS/live] Late fill over-draw: need ${total_cost:.2f}, "
+                                f"have ${oracle.bankroll:.2f} — {tracked_id} NOT recorded"
+                            )
+                        else:
+                            oracle.open_positions[tracked_id] = pos
+                            oracle.bankroll -= total_cost
+                            log.warning(
+                                f"[OMS] Late fill after cancel failure: {tracked_id} "
+                                f"{shares:.2f}sh @ {fill_price:.3f}"
+                            )
         except Exception:
             pass
 

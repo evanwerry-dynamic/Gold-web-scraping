@@ -28,9 +28,10 @@ log = logging.getLogger(__name__)
 _ENTRY_WINDOW_SECONDS_DEFAULT = float(os.getenv("ENTRY_SECONDS_BEFORE_CLOSE", "15"))  # +2s for CLOB latency, +3s buffer
 _MIN_DELTA_DEFAULT = float(os.getenv("MIN_DELTA_THRESHOLD", "0.0003"))  # 0.03% — typical BTC 5-min move is 0.02-0.05%; 0.10% was too high and blocked all normal-vol signals
 _MIN_EDGE_NET_DEFAULT = float(os.getenv("MIN_EDGE_NET", "0.05"))  # 5¢ net after fees — 7¢ was too tight (blocked valid edge after dynamic fee)
-# Minimum order size in USD. Polymarket exchange minimum is ~$1; below that orders
-# fail at the CLOB. Default 1.0 prevents dust orders on small accounts.
-MIN_ORDER_SIZE_USD = float(os.getenv("MIN_ORDER_SIZE_USD", "1.0"))
+# Minimum order size in USD. Paper trading: any amount > 0 works — 0.50 allows
+# a $15 bankroll at 5% Kelly ($0.75) to fire. Live CLOB enforces its own minimum
+# (~$1 for FOK market orders) separately in the OMS exchange-minimum check.
+MIN_ORDER_SIZE_USD = float(os.getenv("MIN_ORDER_SIZE_USD", "0.50"))
 # Kelly hard cap as % of bankroll per trade.
 # 5% gives ~$1.10/order at €20/$22 bankroll (clears Polymarket's ~$1 exchange minimum).
 # At $333+ bankroll 5% produces $16+/trade — tighten to 1.5% (KELLY_MAX_PCT=0.015) then.

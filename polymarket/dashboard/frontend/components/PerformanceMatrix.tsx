@@ -7,12 +7,16 @@ export function PerformanceMatrix() {
   const trades = useTradesStore((s) => s.trades);
 
   const stats = STRATEGIES.map((s) => {
-    // Exclude rejected/zero-size orders — they never reached the exchange
-    const st = trades.filter((t) => t.strategy === s && t.action !== "rejected" && t.dollar_size > 0);
-    const closed = st.filter((t) => t.pnl !== null);
+    // Only count terminal events (redeem = resolved win/loss, expired = orphan-reconciled loss).
+    // Raw buy records (no action) are excluded — they double-count with their terminal event
+    // and stay "OPEN" (pnl=null) until the window closes, skewing win% and P&L.
+    const TERMINAL = ["redeem", "expired", "settle"];
+    const closed = trades.filter(
+      (t) => t.strategy === s && TERMINAL.includes(t.action ?? "") && (t.dollar_size ?? 0) > 0
+    );
     const wins = closed.filter((t) => (t.pnl ?? 0) > 0).length;
     const total_pnl = closed.reduce((sum, t) => sum + (t.pnl ?? 0), 0);
-    return { strategy: s, count: st.length, closed: closed.length, wins, total_pnl };
+    return { strategy: s, count: closed.length, closed: closed.length, wins, total_pnl };
   });
 
   return (

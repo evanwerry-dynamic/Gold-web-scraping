@@ -19,8 +19,9 @@ export function TradeFeed() {
         ) : (
           trades.map((t: Trade, i: number) => {
             const isRejected = t.action === "rejected";
+            const isExpired = t.action === "expired";
             const pnl = t.pnl;
-            const pnlColor = isRejected ? "#ff4466" : pnl === null ? "#555" : pnl >= 0 ? "#00ff88" : "#ff4466";
+            const pnlColor = (isRejected || isExpired) ? "#ff4466" : pnl === null ? "#555" : pnl >= 0 ? "#00ff88" : "#ff4466";
             const sideColor = ["UP", "YES"].includes(t.side) ? "#00ff88" : "#ff9900";
             return (
               <div
@@ -31,14 +32,14 @@ export function TradeFeed() {
                   display: "flex",
                   flexDirection: "column",
                   gap: 2,
-                  opacity: isRejected ? 0.65 : 1,
+                  opacity: (isRejected || isExpired) ? 0.65 : 1,
                 }}
               >
                 {/* Row 1: badge + side + P&L */}
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <span style={{
-                    background: isRejected ? "#2a0a0a" : "#1a1a1a",
-                    color: isRejected ? "#ff4466" : "#00ff88",
+                    background: (isRejected || isExpired) ? "#2a0a0a" : "#1a1a1a",
+                    color: (isRejected || isExpired) ? "#ff4466" : "#00ff88",
                     fontSize: 9,
                     fontWeight: 700,
                     padding: "1px 5px",
@@ -52,7 +53,7 @@ export function TradeFeed() {
                   </span>
                   <span style={{ flex: 1 }} />
                   <span style={{ color: pnlColor, fontWeight: 700, fontSize: 12 }}>
-                    {isRejected ? "REJECT" : pnl === null ? "OPEN" : `${pnl >= 0 ? "+" : ""}$${Math.abs(pnl).toFixed(2)}`}
+                    {isRejected ? "REJECT" : isExpired ? `−$${Math.abs(pnl ?? 0).toFixed(2)}` : pnl === null ? "OPEN" : `${pnl >= 0 ? "+" : ""}$${Math.abs(pnl).toFixed(2)}`}
                   </span>
                 </div>
                 {/* Row 2: entry price + size */}

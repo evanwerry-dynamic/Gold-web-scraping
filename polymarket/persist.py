@@ -311,17 +311,77 @@ def restore_state(oracle: OracleBuffer) -> None:
             oracle.bankroll = saved_bankroll
     # Recompute P&L from the trade log — never restore stale in-memory totals.
     # This keeps LIVE header and HISTORY page always in sync after a redeploy.
-    from polymarket.data import load_trade_history
+    from polymarket.data import load_trade_history, append_trade
     from datetime import datetime, timezone
     today_start = datetime.now(timezone.utc).replace(
         hour=0, minute=0, second=0, microsecond=0
     ).timestamp()
-    all_closed = [t for t in load_trade_history() if t.get("pnl") is not None]
+    all_history = load_trade_history()
+    all_closed = [t for t in all_history if t.get("pnl") is not None]
     oracle.total_pnl = sum(t["pnl"] for t in all_closed)
     oracle.today_pnl = sum(
         t["pnl"] for t in all_closed
         if datetime.fromisoformat(t.get("timestamp", "1970-01-01")).timestamp() >= today_start
     )
+
+    # Orphan reconciliation: buy records older than 10 minutes with no terminal event
+    # (redeem/expired) for the same market. These are positions that were filled but the
+    # bot crashed/redeployed before the 5-min window closed — mark them LOST (conservative).
+    # Bankroll was already debited on fill; this just closes the accounting record so the
+    # trade feed shows the outcome instead of "OPEN" and total_pnl reflects the loss.
+    try:
+        cutoff_ts = time.time() - 600  # 10 min — window is definitely closed
+        terminal_market_ids = {
+            t.get("market_id")
+            for t in all_history
+            if t.get("action") in ("redeem", "expired", "settle")
+        }
+        orphans = [
+            t for t in all_history
+            if t.get("pnl") is None
+            and t.get("action") not in ("rejected", "redeem", "expired", "settle")
+            and float(t.get("dollar_size") or 0) > 0
+            and t.get("market_id") not in terminal_market_ids
+            and datetime.fromisoformat(
+                t.get("timestamp", "1970-01-01")
+            ).timestamp() < cutoff_ts
+        ]
+        if orphans:
+            log.warning(
+                f"Startup: {len(orphans)} orphaned fill(s) with no terminal event — "
+                "marking LOST (bot restarted before window closed)"
+            )
+            recon_total = 0.0
+            recon_today = 0.0
+            for rec in orphans:
+                loss = -float(rec.get("dollar_size", 0))
+                try:
+                    is_today = datetime.fromisoformat(
+                        rec.get("timestamp", "1970-01-01")
+                    ).timestamp() >= today_start
+                except Exception:
+                    is_today = False
+                append_trade({
+                    "order_id": rec.get("order_id", "orphan"),
+                    "action": "expired",
+                    "strategy": rec.get("strategy", "?"),
+                    "market_id": rec.get("market_id", "?"),
+                    "side": rec.get("side", "?"),
+                    "dollar_size": rec.get("dollar_size", 0),
+                    "pnl": round(loss, 4),
+                    "paper": rec.get("paper", True),
+                })
+                recon_total += loss
+                if is_today:
+                    recon_today += loss
+            oracle.total_pnl += recon_total
+            oracle.today_pnl += recon_today
+            log.warning(
+                f"Orphan reconciliation complete: {len(orphans)} position(s) → "
+                f"total_pnl adjusted {recon_total:+.2f} (today {recon_today:+.2f})"
+            )
+    except Exception as exc:
+        log.warning(f"Orphan reconciliation failed (non-fatal): {exc!r}")
 
     now = time.time()
     TWENTY_FOUR_HOURS = 86400.0

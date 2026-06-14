@@ -108,30 +108,60 @@ async def _check_ghost_positions(oracle: OracleBuffer) -> None:
             if not token_id or token_id in tracked_tokens:
                 continue
 
-            condition_id = str(pos_data.get("conditionId") or pos_data.get("condition_id") or "")
+            # Try every field name Polymarket uses for condition IDs
+            raw_cid = (
+                pos_data.get("conditionId")
+                or pos_data.get("condition_id")
+                or pos_data.get("condition")
+                or pos_data.get("questionId")
+                or pos_data.get("question_id")
+                or ""
+            )
+            condition_id = str(raw_cid) if raw_cid else ""
+
+            # Validate that condition_id is actually a usable hex string.
+            # Data API sometimes returns non-hex IDs in these fields.
+            _hex_ok = False
+            if condition_id:
+                _stripped = condition_id.replace("0x", "").replace("0X", "")
+                try:
+                    bytes.fromhex(_stripped.zfill(64))
+                    _hex_ok = True
+                except ValueError:
+                    log.warning(
+                        f"[sanity] conditionId from Data API is not valid hex "
+                        f"({condition_id!r}) — will look up via Gamma API"
+                    )
+
+            # If Data API didn't give a valid conditionId, look it up from Gamma
+            # using the token ID (outcome token → market → conditionId).
+            if not _hex_ok and token_id:
+                condition_id = await _lookup_condition_id(token_id, loop)
+                if condition_id:
+                    _hex_ok = True
+
             size = float(pos_data.get("size") or pos_data.get("currentValue") or 0)
             title = pos_data.get("title") or pos_data.get("market") or "?"
             outcome = str(pos_data.get("outcome") or pos_data.get("side") or "YES").upper()
             side = "YES" if outcome in ("YES", "UP", "1") else "NO"
 
             log.error(
-                f"GHOST POSITION: token={token_id[:12]}… size={size:.2f} "
+                f"GHOST POSITION: token={token_id[:12]}… size={size:.4f} "
+                f"conditionId={condition_id[:16] if condition_id else 'UNKNOWN'}… "
                 f"market={title} — not in bot tracking"
             )
 
-            # If we have a condition_id, attempt to redeem it now using the
-            # confirmed forward() ABI. This recovers positions dropped from
-            # tracking (e.g. after MAX_REDEEM_ATTEMPTS was hit pre-fix).
-            if condition_id and size > 0 and not oracle.paper_trading:
+            # Attempt on-chain redemption using the confirmed forward() ABI.
+            if _hex_ok and condition_id and size > 0 and not oracle.paper_trading:
                 try:
                     from polymarket.execution.redeem import _redeem_position
+                    # Data API size may be in raw 1e6 units or in human-readable shares.
+                    # Values > 1000 are almost certainly raw units; divide to get dollars.
+                    payout = size / 1e6 if size > 1000 else size
                     log.info(
                         f"[sanity] Attempting ghost redemption: "
-                        f"condition={condition_id[:16]}… size={size:.2f}"
+                        f"condition={condition_id[:16]}… payout≈{payout:.2f}"
                     )
-                    # Data API size is in raw 1e6 units (same as ERC-1155 balance).
-                    # Divide to get human-readable dollar payout.
-                    payout = size / 1e6
                     await _redeem_position(
                         condition_id=condition_id,
                         token_id=token_id,
@@ -150,8 +180,57 @@ async def _check_ghost_positions(oracle: OracleBuffer) -> None:
                         f"[sanity] Ghost redemption failed for {condition_id[:16]}…: "
                         f"{redeem_exc!r} — redeem manually at polymarket.com"
                     )
+            elif not _hex_ok:
+                log.warning(
+                    f"[sanity] Cannot auto-redeem ghost {token_id[:12]}…: "
+                    "no valid conditionId found. Redeem manually at polymarket.com."
+                )
     except Exception as exc:
         log.warning(f"Ghost position check failed: {exc!r}")
+
+
+async def _lookup_condition_id(token_id: str, loop) -> str:
+    """Look up the Gnosis CTF conditionId for a Polymarket outcome token via Gamma API.
+
+    The Data API /positions endpoint sometimes returns non-hex IDs in its conditionId
+    field. The Gamma API /markets endpoint returns the real on-chain conditionId.
+    """
+    try:
+        resp = await loop.run_in_executor(
+            None,
+            lambda: __import__("requests").get(
+                "https://gamma-api.polymarket.com/markets",
+                params={"clob_token_ids": token_id},
+                timeout=10,
+            ),
+        )
+        resp.raise_for_status()
+        markets = resp.json() or []
+        if not markets:
+            # Try alternative field name
+            resp2 = await loop.run_in_executor(
+                None,
+                lambda: __import__("requests").get(
+                    "https://gamma-api.polymarket.com/markets",
+                    params={"clobTokenId": token_id},
+                    timeout=10,
+                ),
+            )
+            resp2.raise_for_status()
+            markets = resp2.json() or []
+        if markets:
+            cid = str(markets[0].get("conditionId") or markets[0].get("condition_id") or "")
+            if cid:
+                stripped = cid.replace("0x", "").replace("0X", "")
+                try:
+                    bytes.fromhex(stripped.zfill(64))
+                    log.info(f"[sanity] Gamma API resolved conditionId for token {token_id[:12]}…: {cid[:16]}…")
+                    return cid
+                except ValueError:
+                    pass
+    except Exception as exc:
+        log.warning(f"[sanity] Gamma conditionId lookup failed for {token_id[:12]}…: {exc!r}")
+    return ""
 
 
 async def _check_gas(oracle: OracleBuffer) -> None:

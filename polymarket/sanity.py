@@ -105,12 +105,48 @@ async def _check_ghost_positions(oracle: OracleBuffer) -> None:
         tracked_tokens = {p.token_id for p in oracle.open_positions.values()}
         for pos_data in actual:
             token_id = str(pos_data.get("asset") or pos_data.get("tokenId") or "")
-            if token_id and token_id not in tracked_tokens:
-                log.error(
-                    f"GHOST POSITION: token={token_id[:12]}… "
-                    f"size={pos_data.get('size', '?')} "
-                    f"market={pos_data.get('title', '?')} — not in bot tracking"
-                )
+            if not token_id or token_id in tracked_tokens:
+                continue
+
+            condition_id = str(pos_data.get("conditionId") or pos_data.get("condition_id") or "")
+            size = float(pos_data.get("size") or pos_data.get("currentValue") or 0)
+            title = pos_data.get("title") or pos_data.get("market") or "?"
+            outcome = str(pos_data.get("outcome") or pos_data.get("side") or "YES").upper()
+            side = "YES" if outcome in ("YES", "UP", "1") else "NO"
+
+            log.error(
+                f"GHOST POSITION: token={token_id[:12]}… size={size:.2f} "
+                f"market={title} — not in bot tracking"
+            )
+
+            # If we have a condition_id, attempt to redeem it now using the
+            # confirmed forward() ABI. This recovers positions dropped from
+            # tracking (e.g. after MAX_REDEEM_ATTEMPTS was hit pre-fix).
+            if condition_id and size > 0 and not oracle.paper_trading:
+                try:
+                    from polymarket.execution.redeem import _redeem_position
+                    log.info(
+                        f"[sanity] Attempting ghost redemption: "
+                        f"condition={condition_id[:16]}… size={size:.2f}"
+                    )
+                    await _redeem_position(
+                        condition_id=condition_id,
+                        token_id=token_id,
+                        shares=size,
+                        side=side,
+                        paper=False,
+                    )
+                    async with oracle.bankroll_lock:
+                        oracle.bankroll += size
+                    log.info(
+                        f"[sanity] Ghost redemption succeeded: +{size:.2f} → bankroll "
+                        f"now {oracle.bankroll:.2f}"
+                    )
+                except Exception as redeem_exc:
+                    log.warning(
+                        f"[sanity] Ghost redemption failed for {condition_id[:16]}…: "
+                        f"{redeem_exc!r} — redeem manually at polymarket.com"
+                    )
     except Exception as exc:
         log.warning(f"Ghost position check failed: {exc!r}")
 

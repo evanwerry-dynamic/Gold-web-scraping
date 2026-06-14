@@ -173,7 +173,7 @@ async def _probe_proxy_at_startup() -> None:
 
 async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = None) -> None:
     """Claim resolved ERC-1155 positions for pUSD. Never exits."""
-    log.info("Redemption loop starting [build: redeem-v11 forward+batch probe]...")
+    log.info("Redemption loop starting [build: redeem-v12 forward() hardcoded]...")
 
     # Run a one-time startup probe so we know which proxy call pattern works
     # without waiting for a real position to redeem. This logs proxy.owner()
@@ -652,93 +652,32 @@ async def _execute_calls(w3, acct, pk: str, proxy: str, calls, loop) -> str:
             last = tx_hash.hex()
         return last
 
-    # 1proxy path — try multiple function ABIs/targets in priority order.
-    # The first pattern whose eth_call simulation passes is used for the real tx.
-    from polymarket.execution.wallet import PROXY_WALLET_FACTORY
-
-    factory_addr = w3.to_checksum_address(PROXY_WALLET_FACTORY)
-
-    # Diagnose proxy ownership so we can detect key mismatches in the logs.
-    try:
-        owner_contract = w3.eth.contract(address=proxy_addr, abi=_OWNER_VIEW_ABI)
-        proxy_owner = await loop.run_in_executor(
-            None, lambda: owner_contract.functions.owner().call()
-        )
-        log.info(
-            f"[live] proxy.owner() = {proxy_owner} | EOA = {acct.address} "
-            f"| match = {proxy_owner.lower() == acct.address.lower()}"
-        )
-    except Exception as exc:
-        log.warning(f"[live] proxy.owner() call failed: {exc!r}")
-
-    # Build call lists for all struct variants.
-    pcalls_tc = [(0, w3.to_checksum_address(to), 0, _to_bytes(data)) for to, data in calls]
-    pcalls_no_tc = [(w3.to_checksum_address(to), 0, _to_bytes(data)) for to, data in calls]
-    pcalls_fwd = [(w3.to_checksum_address(to), 0, _to_bytes(data)) for to, data in calls]
-
-    factory_tc = w3.eth.contract(address=factory_addr, abi=_ONE_PROXY_ABI)
-    factory_no_tc = w3.eth.contract(address=factory_addr, abi=_ONE_PROXY_NO_TC_ABI)
-    wallet_tc = w3.eth.contract(address=proxy_addr, abi=_ONE_PROXY_ABI)
-    wallet_no_tc = w3.eth.contract(address=proxy_addr, abi=_ONE_PROXY_NO_TC_ABI)
-    wallet_exec = w3.eth.contract(address=proxy_addr, abi=_EXECUTE_ABI)
-    wallet_fwd = w3.eth.contract(address=proxy_addr, abi=_FORWARD_ABI)
-    wallet_fwd_batch = w3.eth.contract(address=proxy_addr, abi=_FORWARD_BATCH_ABI)
-
-    # Single-call args for single-call variants
+    # Confirmed by startup probe: wallet.forward(address,uint256,bytes) is the
+    # correct function on this Polymarket ProxyWallet (selector 0xd7f31eb9).
+    # All other patterns (proxy/execute) hit the fallback and revert with 0x1c8a498f.
+    # Call forward() directly from the EOA — owner()==EOA so msg.sender==owner passes.
     single_to, single_data = calls[0]
+    wallet_fwd = w3.eth.contract(address=proxy_addr, abi=_FORWARD_ABI)
+    calldata = wallet_fwd.encode_abi("forward", args=[
+        w3.to_checksum_address(single_to), 0, _to_bytes(single_data)
+    ])
 
-    patterns = [
-        # forward(address,uint256,bytes) — canonical Polymarket ProxyWallet.
-        # Probe confirmed owner()==EOA and match=True, so this should pass
-        # the msg.sender==owner check when the EOA signs the tx directly.
-        ("wallet.forward(to,value,data)",
-         proxy_addr,
-         wallet_fwd.encode_abi("forward", args=[
-             w3.to_checksum_address(single_to), 0, _to_bytes(single_data)
-         ])),
-        # Batch forward — same contract, array input
-        ("wallet.forward(calls[])",
-         proxy_addr,
-         wallet_fwd_batch.encode_abi("forward", args=[pcalls_fwd])),
-        # Remaining legacy patterns kept for fallback
-        ("factory.proxy(typeCode,to,value,data)",
-         factory_addr, factory_tc.encode_abi("proxy", args=[pcalls_tc])),
-        ("factory.proxy(to,value,data)",
-         factory_addr, factory_no_tc.encode_abi("proxy", args=[pcalls_no_tc])),
-        ("wallet.proxy(typeCode,to,value,data)",
-         proxy_addr, wallet_tc.encode_abi("proxy", args=[pcalls_tc])),
-        ("wallet.proxy(to,value,data)",
-         proxy_addr, wallet_no_tc.encode_abi("proxy", args=[pcalls_no_tc])),
-        ("wallet.execute(dest,value,func)",
-         proxy_addr,
-         wallet_exec.encode_abi("execute", args=[
-             w3.to_checksum_address(single_to), 0, _to_bytes(single_data)
-         ])),
-    ]
-
-    for label, target, calldata in patterns:
-        try:
-            await loop.run_in_executor(
-                None, lambda t=target, d=calldata: w3.eth.call(
-                    {"from": acct.address, "to": t, "data": d}
-                )
+    try:
+        await loop.run_in_executor(
+            None, lambda: w3.eth.call(
+                {"from": acct.address, "to": proxy_addr, "data": calldata}
             )
-            log.info(f"[live] Sim OK ({label}) — submitting tx")
-            tx_hash, receipt = await _send_tx(w3, acct, pk, target, calldata, loop, gas=700_000)
-            if receipt.status != 1:
-                raise RuntimeError(f"{label} reverted on-chain: {tx_hash.hex()}")
-            return tx_hash.hex()
-        except RuntimeError:
-            raise  # on-chain revert — stop trying
-        except Exception as sim_exc:
-            log.warning(
-                f"[live] Sim FAILED ({label}): {_extract_revert_hex(sim_exc)}"
-            )
+        )
+    except Exception as sim_exc:
+        raise RuntimeError(
+            f"[live] forward() sim failed: {_extract_revert_hex(sim_exc)}"
+        )
 
-    raise RuntimeError(
-        "All proxy execution patterns failed — check sim logs above for revert hex. "
-        "Confirm POLYGON_PRIVATE_KEY matches the wallet shown as 'owner' in the log."
-    )
+    log.info("[live] forward() sim OK — submitting tx")
+    tx_hash, receipt = await _send_tx(w3, acct, pk, proxy_addr, calldata, loop, gas=700_000)
+    if receipt.status != 1:
+        raise RuntimeError(f"wallet.forward() reverted on-chain: {tx_hash.hex()}")
+    return tx_hash.hex()
 
 
 async def _redeem_position(

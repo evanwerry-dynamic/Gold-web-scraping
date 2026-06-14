@@ -191,20 +191,49 @@ async def run() -> None:
     log.info(f"   Key present: {has_key}")
     log.info(f"   Positions restored: {len(oracle.open_positions)}")
 
-    await asyncio.gather(
+    # Strategy toggles. Strategy A (late-window momentum) is the documented
+    # high-conviction winner and is protected by the should_trade() 0.70
+    # min-entry-price guard, so it never buys cheap losing sides.
+    #
+    # Strategies B (market making) and C (arbitrage) are DISABLED by default:
+    # on fast 5-min BTC binaries the maker's resting quotes get adversely
+    # selected — they fill exactly when that side is losing — which produced the
+    # cheap 17-22¢ losing fills. Re-enable with ENABLE_MAKER=true / ENABLE_ARB=true
+    # only after the adverse-selection guards are proven on paper.
+    def _flag(name: str, default: bool) -> bool:
+        raw = os.getenv(name)
+        if raw is None or raw.strip() == "":
+            return default
+        return raw.strip().lower() in ("1", "true", "yes")
+
+    enable_signal = _flag("ENABLE_SIGNAL", True)
+    enable_maker = _flag("ENABLE_MAKER", False)
+    enable_arb = _flag("ENABLE_ARB", False)
+    active = [
+        n for n, on in (("A/signal", enable_signal), ("B/maker", enable_maker), ("C/arb", enable_arb))
+        if on
+    ]
+    log.info(f"   Strategies enabled: {', '.join(active) or 'NONE'}")
+
+    tasks = [
         _guard(lambda: binance_ws_loop(oracle),                    "binance_ws"),
         _guard(lambda: clob_ws_loop(oracle),                       "clob_ws"),
         _guard(lambda: chainlink_rtds_loop(oracle),                "chainlink_rtds"),
-        _guard(lambda: signal_loop(oracle, order_queue, risk_mgr), "signal_loop"),
-        _guard(lambda: maker_loop(oracle, order_queue, risk_mgr),  "maker_loop"),
-        _guard(lambda: arb_loop(oracle, order_queue, risk_mgr),    "arb_loop"),
         _guard(lambda: oms_loop(order_queue, oracle, risk_mgr),    "oms_loop"),
         _guard(lambda: redeem_loop(oracle, risk_mgr),              "redeem_loop"),
         _guard(lambda: sanity_loop(oracle, risk_mgr),              "sanity_loop"),
         _guard(lambda: persist_loop(oracle),                       "persist_loop"),
         _guard(lambda: calibrator_loop(),                          "calibrator"),
         _guard(lambda: _dashboard_broadcast(oracle),               "dashboard_broadcast"),
-    )
+    ]
+    if enable_signal:
+        tasks.append(_guard(lambda: signal_loop(oracle, order_queue, risk_mgr), "signal_loop"))
+    if enable_maker:
+        tasks.append(_guard(lambda: maker_loop(oracle, order_queue, risk_mgr), "maker_loop"))
+    if enable_arb:
+        tasks.append(_guard(lambda: arb_loop(oracle, order_queue, risk_mgr), "arb_loop"))
+
+    await asyncio.gather(*tasks)
 
 
 async def _dashboard_broadcast(oracle) -> None:

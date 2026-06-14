@@ -129,17 +129,20 @@ async def _check_ghost_positions(oracle: OracleBuffer) -> None:
                         f"[sanity] Attempting ghost redemption: "
                         f"condition={condition_id[:16]}… size={size:.2f}"
                     )
+                    # Data API size is in raw 1e6 units (same as ERC-1155 balance).
+                    # Divide to get human-readable dollar payout.
+                    payout = size / 1e6
                     await _redeem_position(
                         condition_id=condition_id,
                         token_id=token_id,
-                        shares=size,
+                        shares=payout,
                         side=side,
                         paper=False,
                     )
                     async with oracle.bankroll_lock:
-                        oracle.bankroll += size
+                        oracle.bankroll += payout
                     log.info(
-                        f"[sanity] Ghost redemption succeeded: +{size:.2f} → bankroll "
+                        f"[sanity] Ghost redemption succeeded: +{payout:.2f} → bankroll "
                         f"now {oracle.bankroll:.2f}"
                     )
                 except Exception as redeem_exc:

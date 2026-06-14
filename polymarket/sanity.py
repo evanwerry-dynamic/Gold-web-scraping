@@ -17,7 +17,10 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
 from polymarket.oracle_buffer import OracleBuffer
-from polymarket.execution.wallet import get_matic_balance, get_pusd_balance, get_pusd_allowance, approve_pusd
+from polymarket.execution.wallet import (
+    get_matic_balance, get_pusd_balance, get_pusd_allowance, approve_pusd,
+    get_collateral_balance,
+)
 
 if TYPE_CHECKING:
     from polymarket.risk import RiskManager
@@ -150,16 +153,20 @@ async def _check_pusd_allowance(oracle: OracleBuffer) -> None:
 
 
 async def _check_bankroll_vs_chain(oracle: OracleBuffer) -> None:
-    """Reconcile oracle.bankroll against actual on-chain pUSD balance."""
+    """Reconcile oracle.bankroll against on-chain collateral (pUSD + USDC.e).
+
+    Redemptions pay out USDC.e while trading uses pUSD, so both are counted —
+    otherwise a freshly redeemed win looks like a 20%+ shortfall and false-halts.
+    """
     import os
     if os.getenv("PAPER_TRADING", "true").lower() == "true":
         return  # Nothing to reconcile in paper mode
 
     try:
-        chain_balance = await get_pusd_balance()
+        chain_balance = await get_collateral_balance()
         if oracle.bankroll > 0 and chain_balance < oracle.bankroll * 0.8:
             log.critical(
-                f"BANKROLL MISMATCH: on-chain pUSD={chain_balance:.2f} is more than 20% "
+                f"BANKROLL MISMATCH: on-chain collateral={chain_balance:.2f} is more than 20% "
                 f"below oracle.bankroll={oracle.bankroll:.2f} — halting trading"
             )
             oracle.emergency_halt = True

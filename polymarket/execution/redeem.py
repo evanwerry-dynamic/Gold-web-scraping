@@ -26,7 +26,7 @@ REDEEM_INTERVAL = 30.0
 
 async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = None) -> None:
     """Claim resolved ERC-1155 positions for pUSD. Never exits."""
-    log.info("Redemption loop starting [build: redeem-v5 diagnostics: sim-revert-reason + payoutDenominator]...")
+    log.info("Redemption loop starting [build: redeem-v6 direct CTF redeem (USDC.e) + sim diagnostics]...")
     while True:
         await asyncio.sleep(REDEEM_INTERVAL)
 
@@ -300,27 +300,22 @@ async def _detect_collateral(w3, ct, holder: str, cid_bytes: bytes, candidates, 
 
 
 def _build_redeem_calls(w3, ct, collateral: str, cid_bytes: bytes):
-    """Calls to redeem into pUSD: approve the adapter, then redeem through it.
+    """Single call: ConditionalTokens.redeemPositions.
 
-    Returns [(to, calldata), …]. ConditionalTokens.setApprovalForAll lets the
-    adapter pull the ERC-1155 tokens; the adapter then burns them, unwraps the
-    USDC.e proceeds, and returns pUSD to the caller (the proxy). Both run in one
-    proxy() batch so the approval is in place before the redeem.
+    This burns the holder's own outcome tokens and returns the underlying
+    collateral (USDC.e) directly to the holder — no setApprovalForAll, no
+    adapter. It is the canonical Gnosis CTF redemption and is guaranteed to
+    succeed once the condition is resolved on-chain. (The CtfCollateralAdapter
+    pUSD path reverts with no reason here, so we redeem the underlying instead;
+    bankroll reconciliation counts USDC.e alongside pUSD.)
     """
-    from polymarket.execution.wallet import CTF_COLLATERAL_ADAPTER, CONDITIONAL_TOKENS
+    from polymarket.execution.wallet import CONDITIONAL_TOKENS
 
-    adapter = w3.to_checksum_address(CTF_COLLATERAL_ADAPTER)
-    approve_data = ct.encode_abi("setApprovalForAll", args=[adapter, True])
-
-    adapter_c = w3.eth.contract(address=adapter, abi=_ADAPTER_ABI)
-    redeem_data = adapter_c.encode_abi(
+    redeem_data = ct.encode_abi(
         "redeemPositions",
         args=[w3.to_checksum_address(collateral), ZERO_BYTES32, cid_bytes, [1, 2]],
     )
-    return [
-        (w3.to_checksum_address(CONDITIONAL_TOKENS), approve_data),
-        (adapter, redeem_data),
-    ]
+    return [(w3.to_checksum_address(CONDITIONAL_TOKENS), redeem_data)]
 
 
 async def _execute_calls(w3, acct, pk: str, proxy: str, calls, loop) -> str:
@@ -473,4 +468,4 @@ async def _redeem_position(
     calls = _build_redeem_calls(w3, ct, collateral, cid_bytes)
     tx_hex = await _execute_calls(w3, acct, pk, proxy, calls, loop)
 
-    log.info(f"[live] Redeemed {condition_id[:16]}…: {shares:.2f}sh → pUSD, tx {tx_hex}")
+    log.info(f"[live] Redeemed {condition_id[:16]}…: {shares:.2f}sh → USDC.e, tx {tx_hex}")

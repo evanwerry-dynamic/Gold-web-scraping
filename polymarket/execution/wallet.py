@@ -247,6 +247,47 @@ async def get_pusd_balance() -> float:
     return raw / 1e6  # 6 decimals
 
 
+async def get_usdce_balance() -> float:
+    """Return USDC.e balance for the active trading address. Raises on RPC failure.
+
+    Redeemed CTF positions pay out the underlying collateral (USDC.e), so this is
+    summed with pUSD when reconciling bankroll against on-chain holdings.
+    """
+    from web3 import Web3
+    w3 = get_web3()  # raises RuntimeError if all RPCs are unreachable
+    pk = os.getenv("POLYGON_PRIVATE_KEY", "")
+    if not pk:
+        return 0.0
+    proxy = (
+        os.getenv("POLY_PROXY_ADDRESS", "").strip()
+        or os.getenv("POLY_ADDRESS", "").strip()
+    )
+    acct = w3.eth.account.from_key(pk)
+    check_addr = proxy if proxy else acct.address
+    abi = [{"inputs": [{"name": "account", "type": "address"}],
+            "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}],
+            "stateMutability": "view", "type": "function"}]
+    contract = w3.eth.contract(
+        address=Web3.to_checksum_address(USDCE_ADDRESS), abi=abi
+    )
+    raw = contract.functions.balanceOf(Web3.to_checksum_address(check_addr)).call()
+    return raw / 1e6  # 6 decimals
+
+
+async def get_collateral_balance() -> float:
+    """Total dollar-equivalent collateral on chain: pUSD + USDC.e.
+
+    Used for bankroll reconciliation. Redemptions return USDC.e while trading
+    uses pUSD, so both must be counted or a redemption looks like a shortfall.
+    """
+    total = await get_pusd_balance()
+    try:
+        total += await get_usdce_balance()
+    except Exception as exc:
+        log.warning(f"USDC.e balance lookup failed, counting pUSD only: {exc!r}")
+    return total
+
+
 async def get_pusd_allowance() -> float:
     """Return pUSD allowance for CTF Exchange V2. Raises on RPC failure."""
     from web3 import Web3

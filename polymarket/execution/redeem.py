@@ -87,20 +87,35 @@ async def _probe_proxy_at_startup() -> None:
         if owner_match is None:
             log.info(f"[probe] proxy exposes no owner()/getOwner()/proxyOwner() getter")
 
-        # 2. Build a cheap no-op read call (CT.payoutDenominator on zeroed conditionId)
-        ct = w3.eth.contract(address=ct_addr, abi=_CT_ABI)
-        noop_data = _to_bytes(ct.encode_abi("payoutDenominator", args=[ZERO_BYTES32]))
+        # 2. Noop inner call: send 0 ETH + empty data to the EOA itself.
+        # This is universally safe as the inner call — no contract interaction,
+        # so no CT-side revert can mask whether the proxy routing itself works.
+        noop_to = acct.address
+        noop_data = b""
 
         factory_tc = w3.eth.contract(address=factory_addr, abi=_ONE_PROXY_ABI)
         factory_no_tc = w3.eth.contract(address=factory_addr, abi=_ONE_PROXY_NO_TC_ABI)
         wallet_tc = w3.eth.contract(address=proxy_addr, abi=_ONE_PROXY_ABI)
         wallet_no_tc = w3.eth.contract(address=proxy_addr, abi=_ONE_PROXY_NO_TC_ABI)
         wallet_exec = w3.eth.contract(address=proxy_addr, abi=_EXECUTE_ABI)
+        wallet_fwd = w3.eth.contract(address=proxy_addr, abi=_FORWARD_ABI)
+        wallet_fwd_batch = w3.eth.contract(address=proxy_addr, abi=_FORWARD_BATCH_ABI)
 
-        pcalls_tc = [(0, ct_addr, 0, noop_data)]
-        pcalls_no_tc = [(ct_addr, 0, noop_data)]
+        pcalls_tc = [(0, noop_to, 0, noop_data)]
+        pcalls_no_tc = [(noop_to, 0, noop_data)]
 
         patterns = [
+            # forward(address,uint256,bytes) — the canonical Polymarket ProxyWallet function.
+            # owner() returned our EOA; if forward() checks msg.sender==owner this passes.
+            ("wallet.forward(to,value,data)",
+             proxy_addr, wallet_fwd.encode_abi("forward", args=[
+                 w3.to_checksum_address(noop_to), 0, noop_data
+             ])),
+            # Batch forward variant
+            ("wallet.forward(calls[])",
+             proxy_addr, wallet_fwd_batch.encode_abi("forward", args=[
+                 [(w3.to_checksum_address(noop_to), 0, noop_data)]
+             ])),
             ("factory.proxy(typeCode,to,value,data)",
              factory_addr, factory_tc.encode_abi("proxy", args=[pcalls_tc])),
             ("factory.proxy(to,value,data)",
@@ -110,12 +125,16 @@ async def _probe_proxy_at_startup() -> None:
             ("wallet.proxy(to,value,data)",
              proxy_addr, wallet_no_tc.encode_abi("proxy", args=[pcalls_no_tc])),
             ("wallet.execute(dest,value,func)",
-             proxy_addr, wallet_exec.encode_abi("execute", args=[ct_addr, 0, noop_data])),
+             proxy_addr, wallet_exec.encode_abi("execute", args=[
+                 w3.to_checksum_address(noop_to), 0, noop_data
+             ])),
         ]
 
         working = None
         results = []  # (short_label, selector_or_OK)
         short = {
+            "wallet.forward(to,value,data)": "fwd",
+            "wallet.forward(calls[])": "fwd[]",
             "factory.proxy(typeCode,to,value,data)": "fac+tc",
             "factory.proxy(to,value,data)": "fac",
             "wallet.proxy(typeCode,to,value,data)": "wal+tc",
@@ -143,9 +162,10 @@ async def _probe_proxy_at_startup() -> None:
         )
         if working is None:
             log.warning(
-                "[probe] ALL 5 proxy patterns fail eth_call. If match=False the EOA in "
+                "[probe] ALL 7 proxy patterns fail eth_call. If match=False the EOA in "
                 "POLYGON_PRIVATE_KEY does not control this proxy (redeem on polymarket.com "
-                "instead). If match=True the selectors above identify the revert reason."
+                "instead). If match=True and fwd=0x1c8a498f too, the wallet uses a "
+                "different function name — check Polygonscan for the proxy contract ABI."
             )
     except Exception as exc:
         log.warning(f"[probe] Proxy startup probe failed: {exc!r}")
@@ -153,7 +173,7 @@ async def _probe_proxy_at_startup() -> None:
 
 async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = None) -> None:
     """Claim resolved ERC-1155 positions for pUSD. Never exits."""
-    log.info("Redemption loop starting [build: redeem-v10 startup proxy probe]...")
+    log.info("Redemption loop starting [build: redeem-v11 forward+batch probe]...")
 
     # Run a one-time startup probe so we know which proxy call pattern works
     # without waiting for a real position to redeem. This logs proxy.owner()
@@ -420,6 +440,29 @@ _OWNER_VIEW_ABI = [
      "outputs": [{"name": "", "type": "address"}],
      "stateMutability": "view", "type": "function"},
 ]
+# Variant D: Polymarket ProxyWallet canonical single-call.
+# selector 0xd7f31eb9 — owner() confirmed returning EOA, so this should pass
+# the msg.sender==owner access check when called directly from the EOA.
+_FORWARD_ABI = [{
+    "inputs": [
+        {"name": "_destination", "type": "address"},
+        {"name": "_value", "type": "uint256"},
+        {"name": "_data", "type": "bytes"},
+    ],
+    "name": "forward", "outputs": [{"name": "", "type": "bytes"}],
+    "stateMutability": "payable", "type": "function",
+}]
+# Variant E: Batch forward.
+_FORWARD_BATCH_ABI = [{
+    "inputs": [{"name": "calls", "type": "tuple[]",
+        "components": [
+            {"name": "to", "type": "address"},
+            {"name": "value", "type": "uint256"},
+            {"name": "data", "type": "bytes"},
+        ]}],
+    "name": "forward", "outputs": [{"name": "", "type": "bytes[]"}],
+    "stateMutability": "payable", "type": "function",
+}]
 
 
 def _extract_revert_hex(exc) -> str:
@@ -628,21 +671,36 @@ async def _execute_calls(w3, acct, pk: str, proxy: str, calls, loop) -> str:
     except Exception as exc:
         log.warning(f"[live] proxy.owner() call failed: {exc!r}")
 
-    # Build call lists for both struct variants (with and without typeCode).
+    # Build call lists for all struct variants.
     pcalls_tc = [(0, w3.to_checksum_address(to), 0, _to_bytes(data)) for to, data in calls]
     pcalls_no_tc = [(w3.to_checksum_address(to), 0, _to_bytes(data)) for to, data in calls]
+    pcalls_fwd = [(w3.to_checksum_address(to), 0, _to_bytes(data)) for to, data in calls]
 
     factory_tc = w3.eth.contract(address=factory_addr, abi=_ONE_PROXY_ABI)
     factory_no_tc = w3.eth.contract(address=factory_addr, abi=_ONE_PROXY_NO_TC_ABI)
     wallet_tc = w3.eth.contract(address=proxy_addr, abi=_ONE_PROXY_ABI)
     wallet_no_tc = w3.eth.contract(address=proxy_addr, abi=_ONE_PROXY_NO_TC_ABI)
     wallet_exec = w3.eth.contract(address=proxy_addr, abi=_EXECUTE_ABI)
+    wallet_fwd = w3.eth.contract(address=proxy_addr, abi=_FORWARD_ABI)
+    wallet_fwd_batch = w3.eth.contract(address=proxy_addr, abi=_FORWARD_BATCH_ABI)
 
-    # Single-call data for execute() variant (only works when len(calls)==1)
+    # Single-call args for single-call variants
     single_to, single_data = calls[0]
 
     patterns = [
-        # label, target, calldata
+        # forward(address,uint256,bytes) — canonical Polymarket ProxyWallet.
+        # Probe confirmed owner()==EOA and match=True, so this should pass
+        # the msg.sender==owner check when the EOA signs the tx directly.
+        ("wallet.forward(to,value,data)",
+         proxy_addr,
+         wallet_fwd.encode_abi("forward", args=[
+             w3.to_checksum_address(single_to), 0, _to_bytes(single_data)
+         ])),
+        # Batch forward — same contract, array input
+        ("wallet.forward(calls[])",
+         proxy_addr,
+         wallet_fwd_batch.encode_abi("forward", args=[pcalls_fwd])),
+        # Remaining legacy patterns kept for fallback
         ("factory.proxy(typeCode,to,value,data)",
          factory_addr, factory_tc.encode_abi("proxy", args=[pcalls_tc])),
         ("factory.proxy(to,value,data)",

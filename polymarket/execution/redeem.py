@@ -26,7 +26,7 @@ REDEEM_INTERVAL = 30.0
 
 async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = None) -> None:
     """Claim resolved ERC-1155 positions for pUSD. Never exits."""
-    log.info("Redemption loop starting...")
+    log.info("Redemption loop starting [build: redeem-v2 EIP-1559 + nonce=latest + approval-check]...")
     while True:
         await asyncio.sleep(REDEEM_INTERVAL)
 

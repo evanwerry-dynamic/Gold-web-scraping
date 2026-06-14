@@ -26,7 +26,7 @@ REDEEM_INTERVAL = 30.0
 
 async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = None) -> None:
     """Claim resolved ERC-1155 positions for pUSD. Never exits."""
-    log.info("Redemption loop starting [build: redeem-v4 factory.proxy batch + adapter pUSD]...")
+    log.info("Redemption loop starting [build: redeem-v5 diagnostics: sim-revert-reason + payoutDenominator]...")
     while True:
         await asyncio.sleep(REDEEM_INTERVAL)
 
@@ -147,6 +147,16 @@ _CT_ABI = [
         "name": "setApprovalForAll", "outputs": [],
         "stateMutability": "nonpayable", "type": "function",
     },
+    {
+        "inputs": [{"name": "account", "type": "address"}, {"name": "operator", "type": "address"}],
+        "name": "isApprovedForAll", "outputs": [{"name": "", "type": "bool"}],
+        "stateMutability": "view", "type": "function",
+    },
+    {
+        "inputs": [{"name": "conditionId", "type": "bytes32"}],
+        "name": "payoutDenominator", "outputs": [{"name": "", "type": "uint256"}],
+        "stateMutability": "view", "type": "function",
+    },
 ]
 
 # V2 CtfCollateralAdapter. Its redeemPositions burns the caller's USDC.e outcome
@@ -233,6 +243,21 @@ async def _send_tx(w3, acct, pk: str, to: str, data: str, loop, gas: int = 500_0
         "type": 2,
         **(await _gas_fields(w3, loop)),
     }
+
+    # Simulate first so an on-chain revert surfaces a human-readable reason in the
+    # logs (web3 decodes the revert string) instead of burning gas on a tx that
+    # reverts with an opaque hash.
+    try:
+        await loop.run_in_executor(
+            None,
+            lambda: w3.eth.call(
+                {"from": acct.address, "to": w3.to_checksum_address(to), "data": data}
+            ),
+        )
+    except Exception as sim_exc:
+        log.error(f"[live] redeem simulation reverted (not sending) → {to[:10]}…: {sim_exc!r}")
+        raise RuntimeError(f"redeem simulation reverted: {sim_exc!r}")
+
     signed = w3.eth.account.sign_transaction(tx, pk)
     tx_hash = await loop.run_in_executor(
         None, lambda: w3.eth.send_raw_transaction(signed.raw_transaction)
@@ -416,6 +441,34 @@ async def _redeem_position(
             f"[live] Holder {holder[:10]}… owns {bal} units "
             f"(collateral={collateral[:10]}…, idx={idx})"
         )
+
+    # Diagnostics: a winning bet only redeems once the on-chain oracle has
+    # reported the condition. payoutDenominator==0 means resolution hasn't hit the
+    # chain yet (the bot's price-feed "WON" is separate) — skip and retry later
+    # rather than burning gas on a guaranteed revert.
+    try:
+        denom = await loop.run_in_executor(
+            None, lambda: ct.functions.payoutDenominator(cid_bytes).call()
+        )
+        from polymarket.execution.wallet import CTF_COLLATERAL_ADAPTER
+        approved = await loop.run_in_executor(
+            None,
+            lambda: ct.functions.isApprovedForAll(
+                w3.to_checksum_address(holder), w3.to_checksum_address(CTF_COLLATERAL_ADAPTER)
+            ).call(),
+        )
+        log.info(f"[live] On-chain state: payoutDenominator={denom}, adapterApproved={approved}")
+        if denom == 0:
+            # Raise (not return) so the loop does NOT credit the bankroll or mark
+            # the position redeemed — it retries on the next cycle.
+            raise RuntimeError(
+                f"condition {condition_id[:16]}… not resolved on-chain yet "
+                "(payoutDenominator=0) — will retry"
+            )
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        log.warning(f"[live] On-chain resolution probe failed: {exc!r}")
 
     calls = _build_redeem_calls(w3, ct, collateral, cid_bytes)
     tx_hex = await _execute_calls(w3, acct, pk, proxy, calls, loop)

@@ -32,9 +32,13 @@ def diagnose():
                 "from your EOA. Find it in the Polymarket app under your profile."
             )
         elif proxy:
+            # Report the signature type the CLOB client ACTUALLY uses (set in
+            # wallet.get_clob_client via CLOB_SIGNATURE_TYPE, default POLY_1271).
+            # The old hardcoded "Gnosis Safe" text was misleading during debugging.
+            sig_type = os.getenv("CLOB_SIGNATURE_TYPE", "POLY_1271").upper()
             log.info(
-                "[DIAG] POLY_PROXY_ADDRESS differs from EOA — correct setup. "
-                "Using POLY_GNOSIS_SAFE signing (MetaMask/browser wallet → Gnosis Safe)."
+                f"[DIAG] POLY_PROXY_ADDRESS differs from EOA — correct setup. "
+                f"CLOB signing type = {sig_type} (override via CLOB_SIGNATURE_TYPE)."
             )
         else:
             log.warning("[DIAG] POLY_PROXY_ADDRESS not set — live orders will fail.")

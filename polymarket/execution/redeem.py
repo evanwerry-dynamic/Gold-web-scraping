@@ -62,25 +62,30 @@ async def _probe_proxy_at_startup() -> None:
         factory_addr = w3.to_checksum_address(PROXY_WALLET_FACTORY)
         ct_addr = w3.to_checksum_address(CONDITIONAL_TOKENS)
 
-        # 1. Check proxy.owner()
-        try:
-            owner_contract = w3.eth.contract(address=proxy_addr, abi=_OWNER_VIEW_ABI)
-            wallet_owner = await loop.run_in_executor(
-                None, lambda: owner_contract.functions.owner().call()
-            )
-            match = wallet_owner.lower() == acct.address.lower()
-            log.info(
-                f"[probe] proxy.owner() = {wallet_owner} | "
-                f"EOA = {acct.address} | match = {match}"
-            )
-            if not match:
-                log.warning(
-                    "[probe] KEY MISMATCH — proxy wallet's registered owner is NOT our EOA. "
-                    "On-chain redemption will fail until POLYGON_PRIVATE_KEY matches "
-                    f"the owner address ({wallet_owner})."
-                )
-        except Exception as exc:
-            log.warning(f"[probe] proxy.owner() failed: {_extract_revert_hex(exc)}")
+        # 1. Determine the proxy's registered owner. Different proxy types expose
+        # the owner under different getter names, so try each in turn.
+        owner_str = "unknown"
+        owner_match = None  # None = couldn't read; True/False once known
+        for getter_abi, label in (
+            (_OWNER_VIEW_ABI, "owner()"),
+            ([{"inputs": [], "name": "getOwner",
+               "outputs": [{"name": "", "type": "address"}],
+               "stateMutability": "view", "type": "function"}], "getOwner()"),
+            ([{"inputs": [], "name": "proxyOwner",
+               "outputs": [{"name": "", "type": "address"}],
+               "stateMutability": "view", "type": "function"}], "proxyOwner()"),
+        ):
+            try:
+                c = w3.eth.contract(address=proxy_addr, abi=getter_abi)
+                fn = getattr(c.functions, label.rstrip("()"))
+                val = await loop.run_in_executor(None, lambda: fn().call())
+                owner_str = f"{val} (via {label})"
+                owner_match = val.lower() == acct.address.lower()
+                break
+            except Exception:
+                continue
+        if owner_match is None:
+            log.info(f"[probe] proxy exposes no owner()/getOwner()/proxyOwner() getter")
 
         # 2. Build a cheap no-op read call (CT.payoutDenominator on zeroed conditionId)
         ct = w3.eth.contract(address=ct_addr, abi=_CT_ABI)
@@ -108,7 +113,15 @@ async def _probe_proxy_at_startup() -> None:
              proxy_addr, wallet_exec.encode_abi("execute", args=[ct_addr, 0, noop_data])),
         ]
 
-        found = False
+        working = None
+        results = []  # (short_label, selector_or_OK)
+        short = {
+            "factory.proxy(typeCode,to,value,data)": "fac+tc",
+            "factory.proxy(to,value,data)": "fac",
+            "wallet.proxy(typeCode,to,value,data)": "wal+tc",
+            "wallet.proxy(to,value,data)": "wal",
+            "wallet.execute(dest,value,func)": "exec",
+        }
         for label, target, calldata in patterns:
             try:
                 await loop.run_in_executor(
@@ -116,16 +129,23 @@ async def _probe_proxy_at_startup() -> None:
                         {"from": acct.address, "to": t, "data": d}
                     )
                 )
-                log.info(f"[probe] WORKING PATTERN: {label} ← will use this for redemptions")
-                found = True
+                results.append((short.get(label, label), "OK"))
+                if working is None:
+                    working = label
             except Exception as exc:
-                log.info(f"[probe] pattern failed ({label}): {_extract_revert_hex(exc)}")
+                results.append((short.get(label, label), _revert_selector(exc)))
 
-        if not found:
+        # ONE compact, phone-readable summary line. Copy THIS line to diagnose.
+        summary = " ".join(f"{k}={v}" for k, v in results)
+        log.critical(
+            f"[probe] SUMMARY | owner={owner_str} | match={owner_match} | "
+            f"working={working or 'NONE'} | {summary}"
+        )
+        if working is None:
             log.warning(
-                "[probe] ALL 5 proxy patterns fail eth_call — redemption will not work "
-                "until the correct proxy ABI is identified. "
-                "Share the '[probe] pattern failed' lines above to diagnose."
+                "[probe] ALL 5 proxy patterns fail eth_call. If match=False the EOA in "
+                "POLYGON_PRIVATE_KEY does not control this proxy (redeem on polymarket.com "
+                "instead). If match=True the selectors above identify the revert reason."
             )
     except Exception as exc:
         log.warning(f"[probe] Proxy startup probe failed: {exc!r}")
@@ -417,6 +437,24 @@ def _extract_revert_hex(exc) -> str:
         if isinstance(arg, dict):
             return str(arg.get('data') or arg)
     return repr(exc)
+
+
+def _revert_selector(exc) -> str:
+    """Return just the 4-byte custom-error selector (e.g. '0x1c8a498f') if present.
+
+    Searches the exception's string form for the first 0x-prefixed hex blob and
+    returns its first 4 bytes. Falls back to a short repr so the summary line is
+    always compact and phone-readable.
+    """
+    import re
+    raw = _extract_revert_hex(exc)
+    m = re.search(r"0x[0-9a-fA-F]{8,}", raw)
+    if m:
+        return m.group(0)[:10]  # 0x + 8 hex chars = 4-byte selector
+    # 'execution reverted' with no data → empty revert (often an EOA/owner reject)
+    if "revert" in raw.lower():
+        return "empty-revert"
+    return raw[:40]
 
 
 async def _gas_fields(w3, loop) -> dict:

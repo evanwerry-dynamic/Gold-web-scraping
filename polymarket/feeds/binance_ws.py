@@ -78,6 +78,7 @@ async def binance_ws_loop(oracle: OracleBuffer) -> None:
                         oracle.btc_price = price
                         oracle.vol_estimator.update(price)
                         now_ts = time.time()
+                        oracle.record_price(price, now_ts)
                         oracle.last_binance_ts = now_ts  # Binance-specific health
                         oracle.last_price_ts = now_ts    # any-source freshness
                         oracle.price_ready.set()
@@ -85,7 +86,10 @@ async def binance_ws_loop(oracle: OracleBuffer) -> None:
 
                         market = oracle.active_market
                         if market and not market.window_open_price:
-                            market.window_open_price = price
+                            # Last-resort backfill only — prefer the price AT the
+                            # window-open boundary over the current tick.
+                            op = oracle.price_at(market.window_open_ts)
+                            market.window_open_price = op if op else price
 
             except Exception as exc:
                 log.warning(f"Binance WS error: {exc!r} — retrying in 5s (Kraken fallback active)")
@@ -143,20 +147,22 @@ async def _kraken_ws_loop(oracle: OracleBuffer) -> None:
                     # the Binance field here is what made the loop think "Binance
                     # recovered" after a single Kraken tick, causing the
                     # connect→suppress→disconnect flapping.
-                    oracle.last_price_ts = time.time()
+                    now = time.time()
+                    oracle.record_price(price, now)
+                    oracle.last_price_ts = now
                     oracle.price_ready.set()
                     oracle.active_price_source = "kraken"  # M12
 
                     # Only feed vol estimator once per second — multiple ticks/s
                     # would fill the 30-sample window in seconds, measuring noise
-                    now = time.time()
                     if now - _last_vol_ts >= 1.0:
                         oracle.vol_estimator.update(price)
                         _last_vol_ts = now
 
                     market = oracle.active_market
                     if market and not market.window_open_price:
-                        market.window_open_price = price
+                        op = oracle.price_at(market.window_open_ts)
+                        market.window_open_price = op if op else price
 
         except Exception as exc:
             log.warning(f"Kraken WS error: {exc!r} — retrying in 5s")
@@ -184,7 +190,9 @@ async def _coingecko_rest_loop(oracle: OracleBuffer) -> None:
             )
             price = float(resp["bitcoin"]["usd"])
             oracle.btc_price = price
-            oracle.last_price_ts = time.time()  # any-source freshness, not Binance
+            now_cg = time.time()
+            oracle.record_price(price, now_cg)
+            oracle.last_price_ts = now_cg  # any-source freshness, not Binance
             oracle.price_ready.set()
             oracle.active_price_source = "coingecko"  # M12
             # M3: throttle vol_estimator to 1s cadence

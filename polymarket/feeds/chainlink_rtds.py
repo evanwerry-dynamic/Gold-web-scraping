@@ -50,7 +50,27 @@ async def chainlink_rtds_loop(oracle: OracleBuffer) -> None:
                 ):
                     log.info(f"New window: {market.market_id} ends {market.window_end_ts}")
                     await _resolve_previous_window(oracle, loop)
-                    market.window_open_price = oracle.btc_price
+                    # Capture the BTC price AT the window-open boundary, not at
+                    # discovery time. Gamma discovery lags the 300s boundary by up
+                    # to POLL_INTERVAL (30s); using the discovery-time price gave a
+                    # stale baseline that could flip the sign of window_delta and
+                    # fire a wrong-direction trade that then resolves against the
+                    # true open. price_at() pulls the recorded sample nearest the
+                    # boundary; fall back to current price only if none is buffered.
+                    open_px = oracle.price_at(market.window_open_ts)
+                    if open_px is None:
+                        open_px = oracle.btc_price
+                        log.warning(
+                            f"No buffered price near window open {market.window_open_ts:.0f} "
+                            f"— using current price {open_px:.2f} as baseline"
+                        )
+                    else:
+                        log.info(
+                            f"Window-open baseline: {open_px:.2f} "
+                            f"(at boundary; current={oracle.btc_price:.2f}, "
+                            f"drift={oracle.btc_price - open_px:+.2f})"
+                        )
+                    market.window_open_price = open_px
                     oracle.active_market = market
             elif oracle.paper_trading:
                 # Paper trading: derive window from system clock — no Polymarket needed
@@ -268,17 +288,23 @@ async def _resolve_previous_window(oracle: OracleBuffer, loop) -> None:
         if gamma_outcome is not None:
             log.info(f"[resolve] {prev.market_id}: Gamma outcome → {'UP' if gamma_outcome else 'DOWN'}")
 
-    # Fallback: BTC price comparison
+    # Fallback: BTC price comparison. Use the buffered price AT the window-close
+    # boundary, not the live price — resolution can run many seconds after close
+    # (30s poll + 5s grace) and BTC can cross the open in that gap, flipping the
+    # outcome relative to the on-chain settlement. price_at falls back to the live
+    # price only when no sample is buffered near the boundary.
     if gamma_outcome is None:
-        final_price = oracle.btc_price
+        close_px = oracle.price_at(prev.window_end_ts)
+        final_price = close_px if close_px is not None else oracle.btc_price
         open_price  = prev.window_open_price or final_price
         gamma_outcome = final_price >= open_price  # ties go to UP (Polymarket convention)
         log.info(
             f"[resolve] {prev.market_id}: Gamma unavailable — "
-            f"using BTC {open_price:.2f}→{final_price:.2f} → {'UP' if gamma_outcome else 'DOWN'}"
+            f"using BTC@close {open_price:.2f}→{final_price:.2f} → {'UP' if gamma_outcome else 'DOWN'}"
         )
     else:
-        final_price = oracle.btc_price
+        close_px = oracle.price_at(prev.window_end_ts)
+        final_price = close_px if close_px is not None else oracle.btc_price
         open_price  = prev.window_open_price or final_price
 
     btc_went_up = gamma_outcome

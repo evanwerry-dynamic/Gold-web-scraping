@@ -77,6 +77,10 @@ class OracleBuffer:
     # BTC price feed
     btc_price: float = 0.0
     vol_estimator: BinanceVolEstimator = field(default_factory=BinanceVolEstimator)
+    # Rolling (timestamp, price) history so the window-open price can be captured
+    # AT the 300s boundary rather than at Gamma discovery time (which lags by up
+    # to the 30s poll interval). 900 samples ≈ 15 min at 1 sample/s.
+    price_history: deque = field(default_factory=lambda: deque(maxlen=900))
 
     # Active Polymarket window
     active_market: ActiveMarket | None = None
@@ -133,6 +137,28 @@ class OracleBuffer:
 
     # Dashboard event queue — OMS pushes trade dicts here, bridge drains them
     pending_trade_events: deque = field(default_factory=lambda: deque(maxlen=1000))
+
+    def record_price(self, price: float, ts: float | None = None) -> None:
+        """Append a timestamped price sample for window-open/close lookups."""
+        if price > 0:
+            self.price_history.append((ts if ts is not None else time.time(), price))
+
+    def price_at(self, target_ts: float, max_age: float = 20.0) -> float | None:
+        """Return the recorded price closest to target_ts.
+
+        Returns None when no sample lies within max_age seconds of the target —
+        e.g. at startup before the buffer reaches back to the window boundary.
+        Called once per window (every ~5 min) so the O(n) scan is negligible.
+        """
+        best_px = None
+        best_dt = None
+        for ts, px in self.price_history:
+            dt = abs(ts - target_ts)
+            if best_dt is None or dt < best_dt:
+                best_dt, best_px = dt, px
+        if best_px is None or best_dt is None or best_dt > max_age:
+            return None
+        return best_px
 
     def window_seconds_remaining(self) -> float:
         if self.active_market is None:

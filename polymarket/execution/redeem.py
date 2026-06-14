@@ -24,6 +24,16 @@ log = logging.getLogger(__name__)
 REDEEM_INTERVAL = 30.0
 
 
+class OnChainNotResolvedYet(RuntimeError):
+    """The condition is not yet settled on-chain (payoutDenominator == 0).
+
+    This is a TRANSIENT state — the bot's price feed resolved the window, but the
+    UMA/oracle on-chain settlement lags by minutes. It must NOT count toward the
+    permanent give-up limit, or a legitimate winning position gets abandoned
+    before it is even redeemable on-chain.
+    """
+
+
 async def _probe_proxy_at_startup() -> None:
     """One-time startup diagnostic — no position needed.
 
@@ -203,6 +213,12 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
                     f"Redeemed {pos.market_id}: {pos.shares:.2f}sh "
                     f"→ {payout:.2f} pUSD (pnl={final_pnl:+.2f})"
                 )
+            except OnChainNotResolvedYet as exc:
+                # Transient: UMA/oracle hasn't settled this condition on-chain yet.
+                # Retry every cycle WITHOUT counting it against the give-up limit —
+                # on-chain settlement can lag the bot's price-feed resolution by
+                # several minutes, far longer than MAX_REDEEM_ATTEMPTS × 30s.
+                log.info(f"Redeem deferred — {pos.market_id}: {exc}")
             except Exception as exc:
                 pos.redeem_attempts += 1
                 MAX_REDEEM_ATTEMPTS = 3
@@ -704,8 +720,9 @@ async def _redeem_position(
         log.info(f"[live] On-chain state: payoutDenominator={denom}, adapterApproved={approved}")
         if denom == 0:
             # Raise (not return) so the loop does NOT credit the bankroll or mark
-            # the position redeemed — it retries on the next cycle.
-            raise RuntimeError(
+            # the position redeemed — it retries on the next cycle. Use the
+            # transient exception so settlement lag never burns a give-up attempt.
+            raise OnChainNotResolvedYet(
                 f"condition {condition_id[:16]}… not resolved on-chain yet "
                 "(payoutDenominator=0) — will retry"
             )

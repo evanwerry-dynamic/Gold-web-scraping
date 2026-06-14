@@ -83,13 +83,20 @@ async def _check_ghost_positions(oracle: OracleBuffer) -> None:
         pk = os.getenv("POLYGON_PRIVATE_KEY", "")
         if not pk:
             return
-        acct = get_web3().eth.account.from_key(pk)
+        # Positions are held by the Polymarket PROXY wallet (the CLOB funder),
+        # NOT the signing EOA. Querying the EOA returns nothing, so ghost
+        # reconciliation would silently never fire. Prefer the proxy address.
+        proxy = (
+            os.getenv("POLY_PROXY_ADDRESS", "").strip()
+            or os.getenv("POLY_ADDRESS", "").strip()
+        )
+        query_addr = proxy or get_web3().eth.account.from_key(pk).address
         loop = asyncio.get_running_loop()
         resp = await loop.run_in_executor(
             None,
             lambda: requests.get(
                 "https://data-api.polymarket.com/positions",
-                params={"user": acct.address, "sizeThreshold": 0.01},
+                params={"user": query_addr, "sizeThreshold": 0.01},
                 timeout=10,
             ),
         )

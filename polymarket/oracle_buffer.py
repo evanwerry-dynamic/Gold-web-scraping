@@ -65,6 +65,7 @@ class OpenPosition:
     resolved: bool = False
     resolution: float = 0.0  # 1.0 = won, 0.0 = lost
     redeemed: bool = False
+    redeem_attempts: int = 0  # on-chain attempts; after MAX_REDEEM_ATTEMPTS give up
     window_open_price: float = 0.0   # BTC price when this window opened (for self-resolution)
     settlement_price: float = 0.0    # BTC price at window close (set by resolver)
     strategy: str = "A"              # Strategy that opened this position (A/B/C)

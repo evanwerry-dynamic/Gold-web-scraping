@@ -26,7 +26,7 @@ REDEEM_INTERVAL = 30.0
 
 async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = None) -> None:
     """Claim resolved ERC-1155 positions for pUSD. Never exits."""
-    log.info("Redemption loop starting [build: redeem-v7 proxyOf diag + wallet-direct fallback + idx fix]...")
+    log.info("Redemption loop starting [build: redeem-v8 max-3-attempts + manual-redeem CRITICAL]...")
     while True:
         await asyncio.sleep(REDEEM_INTERVAL)
 
@@ -52,6 +52,7 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
 
                 # Only mark redeemed after redemption succeeds — suppresses retries on tx revert
                 pos.redeemed = True
+                pos.redeem_attempts = 0
                 final_pnl = payout - pos.cost_basis
 
                 async with oracle.bankroll_lock:
@@ -99,7 +100,29 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
                     f"→ {payout:.2f} pUSD (pnl={final_pnl:+.2f})"
                 )
             except Exception as exc:
-                log.error(f"Redemption failed for {pos.market_id}: {exc!r}")
+                pos.redeem_attempts += 1
+                MAX_REDEEM_ATTEMPTS = 3
+                if pos.redeem_attempts >= MAX_REDEEM_ATTEMPTS:
+                    # The on-chain proxy rejects our EOA as owner — this is expected when
+                    # POLYGON_PRIVATE_KEY is a CLOB API signing key that is NOT the owner
+                    # of the Polymarket proxy wallet. The bot cannot redeem on-chain in
+                    # this configuration. Action required: visit polymarket.com and redeem
+                    # the position manually to receive your winnings.
+                    log.critical(
+                        f"MANUAL REDEMPTION REQUIRED — {pos.market_id}: "
+                        f"won {payout:.2f} USDC.e but on-chain redemption failed {pos.redeem_attempts}x. "
+                        "The proxy wallet's registered owner does not match POLYGON_PRIVATE_KEY. "
+                        "Go to polymarket.com → your profile → open positions and click Redeem. "
+                        f"Condition: {pos.condition_id}  Token: {pos.token_id}"
+                    )
+                    pos.redeemed = True  # Stop retrying to avoid log spam every 30s
+                    async with oracle.bankroll_lock:
+                        oracle.open_positions.pop(order_id, None)
+                else:
+                    log.error(
+                        f"Redemption failed for {pos.market_id} "
+                        f"(attempt {pos.redeem_attempts}/{MAX_REDEEM_ATTEMPTS}): {exc!r}"
+                    )
 
 
 ZERO_ADDR = "0x0000000000000000000000000000000000000000"

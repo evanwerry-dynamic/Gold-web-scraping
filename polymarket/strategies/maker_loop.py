@@ -46,7 +46,7 @@ log = logging.getLogger(__name__)
 REQUOTE_INTERVAL = 5.0       # seconds between quote refreshes
 INFORMED_WINDOW_SECS = 90    # pull ALL quotes this many seconds before close (tightened from 60)
 IMBALANCE_THRESHOLD = 0.70   # pull ALL quotes if bid_qty / total > this
-QUOTE_PCT = 0.05             # each quote side = % of bankroll
+QUOTE_PCT = 0.15             # 15% per side — clears $1 CLOB minimum at micro-bankroll; tighten to ~0.05 above $100
 MIN_VIABLE_QUOTE = 1.0       # skip quoting below this $ (exchange min order)
 TICK = 0.01
 

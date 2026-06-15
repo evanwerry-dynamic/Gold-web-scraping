@@ -41,7 +41,7 @@ MIN_ORDER_SIZE_USD = float(os.getenv("MIN_ORDER_SIZE_USD", "0.50"))
 # Kelly hard cap as % of bankroll per trade.
 # 5% gives ~$1.10/order at €20/$22 bankroll (clears Polymarket's ~$1 exchange minimum).
 # At $333+ bankroll 5% produces $16+/trade — tighten to 1.5% (KELLY_MAX_PCT=0.015) then.
-KELLY_MAX_PCT = float(os.getenv("KELLY_MAX_PCT", "0.05"))
+KELLY_MAX_PCT = float(os.getenv("KELLY_MAX_PCT", "0.15"))  # 15% at micro-bankroll clears $1 CLOB minimum; tighten to ~0.03 once bankroll > $100
 # Conviction gate: minimum |z| where z = δ / (σ·√T_left). This is the argument to
 # the fair-value normal CDF, so it scales conviction with volatility — a 0.03% move
 # is decisive when calm (high z) but noise when wild (low z). A raw-δ gate can't tell

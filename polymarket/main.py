@@ -89,7 +89,9 @@ async def run() -> None:
         "min_edge_net": {0.07, 0.09},
         "entry_seconds_before_close": {12.0, 15.0},
         "min_order_size_usd": {0.0},
-        "min_delta_threshold": {0.001},  # 0.10% was too high — blocked all normal-vol signals
+        "min_delta_threshold": {0.001},   # 0.10% was too high — blocked all normal-vol signals
+        "kelly_max_pct": {0.03, 0.05},    # too small at micro-bankroll — gave $0.29-$0.49, below $1 CLOB minimum
+        "maker_quote_pct": {0.05, 0.06},  # same — $0.49-$0.58 at $10 bankroll, always dormant
     }
     try:
         from polymarket.data import load_state

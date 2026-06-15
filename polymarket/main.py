@@ -87,7 +87,7 @@ async def run() -> None:
     # latency buffers superseded by the full-window + edge-gate architecture.
     _OLD_BAD_DEFAULTS = {
         "min_edge_net": {0.07, 0.09},
-        "entry_seconds_before_close": {12.0, 15.0, 295.0},  # 295s too wide — BTC reverses in 3+ min
+        "entry_seconds_before_close": {12.0, 15.0, 60.0, 295.0},  # all previous defaults; now fixed at 30s
         "min_order_size_usd": {0.0},
         "min_delta_threshold": {0.001},   # 0.10% was too high — blocked all normal-vol signals
         "kelly_max_pct": {0.03, 0.05},    # too small at micro-bankroll — gave $0.29-$0.49, below $1 CLOB minimum
@@ -125,6 +125,11 @@ async def run() -> None:
             "min_order_size_usd": "MIN_ORDER_SIZE_USD",
             "kelly_max_pct": "KELLY_MAX_PCT",
             "maker_quote_pct": "MAKER_QUOTE_PCT",
+            "min_z_score": "MIN_Z_SCORE",
+            "maker_fair_band": "MAKER_FAIR_BAND",
+            "maker_half_spread": "MAKER_HALF_SPREAD",
+            "maker_inventory_skew": "MAKER_INVENTORY_SKEW",
+            "maker_max_sigma": "MAKER_MAX_SIGMA",
         }
         for param, env_name in _PARAM_ENV.items():
             raw = os.getenv(env_name)

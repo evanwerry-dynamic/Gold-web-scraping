@@ -161,9 +161,13 @@ async def run() -> None:
 
     # Use INITIAL_BANKROLL env var as the authoritative starting point for total-loss calc.
     _initial = float(os.getenv("INITIAL_BANKROLL", str(oracle.bankroll)))
-    risk_mgr = RiskManager(bankroll=_initial)
-    # Sync peak to current (may be above initial if bot has profited)
-    risk_mgr.peak = max(_initial, oracle.bankroll)
+    _drawdown_limit = float(os.getenv("DRAWDOWN_LIMIT", "0.40"))  # 40% default — 25% trips too fast at micro-bankroll (single B loss = halt)
+    risk_mgr = RiskManager(bankroll=_initial, drawdown_limit=_drawdown_limit)
+    # Peak resets to current bankroll each startup — the peak drawdown guard protects
+    # THIS SESSION, not all-time. The 40% total_loss_limit (from _initial) is the
+    # all-time floor. Setting peak=initial was a deadlock: after any drawdown, every
+    # restart immediately re-tripped the halt before a single trade could fire.
+    risk_mgr.peak = oracle.bankroll
     # Daily/monthly limits must be measured from the CURRENT bankroll, not the
     # all-time initial deposit. After a losing session the restored bankroll will
     # be below INITIAL_BANKROLL, which would immediately trip the 5% daily limit

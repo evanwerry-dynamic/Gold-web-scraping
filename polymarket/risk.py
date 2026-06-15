@@ -53,22 +53,22 @@ class RiskManager:
         # Permanent halt
         total_loss_pct = (self.initial - current_bankroll) / self.initial
         if total_loss_pct > self.total_loss_limit:
-            return False, f"40% total loss ({total_loss_pct:.1%}) — PERMANENT HALT"
+            return False, f"{self.total_loss_limit:.0%} total loss ({total_loss_pct:.1%}) — PERMANENT HALT"
 
         # Peak drawdown
         drawdown = (self.peak - current_bankroll) / self.peak
         if drawdown > self.drawdown_limit:
-            return False, f"25% drawdown ({drawdown:.1%}) — paused"
+            return False, f"{self.drawdown_limit:.0%} drawdown ({drawdown:.1%}) — paused"
 
         # Daily loss
         daily_loss = (self.daily_start - current_bankroll) / self.daily_start
         if daily_loss > self.daily_loss_limit:
-            return False, f"5% daily loss ({daily_loss:.1%}) — paused until tomorrow"
+            return False, f"{self.daily_loss_limit:.0%} daily loss ({daily_loss:.1%}) — paused until tomorrow"
 
         # Monthly loss
         monthly_loss = (self.monthly_start - current_bankroll) / self.monthly_start
         if monthly_loss > self.monthly_loss_limit:
-            return False, f"15% monthly loss ({monthly_loss:.1%}) — manual restart required"
+            return False, f"{self.monthly_loss_limit:.0%} monthly loss ({monthly_loss:.1%}) — manual restart required"
 
         # Correlation cap
         if correlated_exposure > 0 and current_bankroll > 0:

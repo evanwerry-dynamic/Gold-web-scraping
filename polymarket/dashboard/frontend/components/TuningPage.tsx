@@ -50,7 +50,7 @@ const LEVERS: {
     key: "kelly_max_pct",
     label: "Kelly Cap",
     unit: "fraction of bankroll",
-    effect: "Hard cap per trade. 0.05 = 5% (~$1.10 at $22 bankroll). Tighten to 0.015 above ~$333 bankroll.",
+    effect: "Hard cap per trade. At small bankroll set high enough that Kelly × bankroll ≥ $1 (Polymarket minimum). E.g. 0.15 at $10 = $1.50/trade. Tighten toward 0.03 once bankroll exceeds ~$100.",
     fmt: (v) => `${(v * 100).toFixed(1)}%`,
   },
   {

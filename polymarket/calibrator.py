@@ -50,7 +50,7 @@ PARAM_RANGES = {
 TUNABLE_RANGES = {
     **PARAM_RANGES,
     "min_order_size_usd": (0.0, 100.0),
-    "kelly_max_pct": (0.001, 0.10),
+    "kelly_max_pct": (0.001, 0.25),
     "maker_quote_pct": (0.01, 0.25),
     "maker_half_spread": (0.005, 0.10),
     "maker_inventory_skew": (0.0, 0.20),

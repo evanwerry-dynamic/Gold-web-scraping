@@ -24,9 +24,162 @@ log = logging.getLogger(__name__)
 REDEEM_INTERVAL = 30.0
 
 
+class OnChainNotResolvedYet(RuntimeError):
+    """The condition is not yet settled on-chain (payoutDenominator == 0).
+
+    This is a TRANSIENT state — the bot's price feed resolved the window, but the
+    UMA/oracle on-chain settlement lags by minutes. It must NOT count toward the
+    permanent give-up limit, or a legitimate winning position gets abandoned
+    before it is even redeemable on-chain.
+    """
+
+
+async def _probe_proxy_at_startup() -> None:
+    """One-time startup diagnostic — no position needed.
+
+    Checks who the proxy wallet thinks its owner is, and probes each of the 5
+    proxy execution patterns with a cheap no-op call so Railway logs show WHICH
+    pattern will work for real redemptions before the next win arrives.
+    """
+    await asyncio.sleep(5)  # Let the rest of the startup settle first
+    try:
+        from polymarket.execution.wallet import (
+            PROXY_WALLET_FACTORY, CONDITIONAL_TOKENS, get_web3,
+        )
+        pk = os.getenv("POLYGON_PRIVATE_KEY", "")
+        proxy = (
+            os.getenv("POLY_PROXY_ADDRESS", "").strip()
+            or os.getenv("POLY_ADDRESS", "").strip()
+        )
+        if not pk or not proxy:
+            log.info("[probe] Skipping proxy probe — POLYGON_PRIVATE_KEY or POLY_PROXY_ADDRESS not set")
+            return
+
+        loop = asyncio.get_running_loop()
+        w3 = get_web3()
+        acct = w3.eth.account.from_key(pk)
+        proxy_addr = w3.to_checksum_address(proxy)
+        factory_addr = w3.to_checksum_address(PROXY_WALLET_FACTORY)
+        ct_addr = w3.to_checksum_address(CONDITIONAL_TOKENS)
+
+        # 1. Determine the proxy's registered owner. Different proxy types expose
+        # the owner under different getter names, so try each in turn.
+        owner_str = "unknown"
+        owner_match = None  # None = couldn't read; True/False once known
+        for getter_abi, label in (
+            (_OWNER_VIEW_ABI, "owner()"),
+            ([{"inputs": [], "name": "getOwner",
+               "outputs": [{"name": "", "type": "address"}],
+               "stateMutability": "view", "type": "function"}], "getOwner()"),
+            ([{"inputs": [], "name": "proxyOwner",
+               "outputs": [{"name": "", "type": "address"}],
+               "stateMutability": "view", "type": "function"}], "proxyOwner()"),
+        ):
+            try:
+                c = w3.eth.contract(address=proxy_addr, abi=getter_abi)
+                fn = getattr(c.functions, label.rstrip("()"))
+                val = await loop.run_in_executor(None, lambda: fn().call())
+                owner_str = f"{val} (via {label})"
+                owner_match = val.lower() == acct.address.lower()
+                break
+            except Exception:
+                continue
+        if owner_match is None:
+            log.info(f"[probe] proxy exposes no owner()/getOwner()/proxyOwner() getter")
+
+        # 2. Noop inner call: send 0 ETH + empty data to the EOA itself.
+        # This is universally safe as the inner call — no contract interaction,
+        # so no CT-side revert can mask whether the proxy routing itself works.
+        noop_to = acct.address
+        noop_data = b""
+
+        factory_tc = w3.eth.contract(address=factory_addr, abi=_ONE_PROXY_ABI)
+        factory_no_tc = w3.eth.contract(address=factory_addr, abi=_ONE_PROXY_NO_TC_ABI)
+        wallet_tc = w3.eth.contract(address=proxy_addr, abi=_ONE_PROXY_ABI)
+        wallet_no_tc = w3.eth.contract(address=proxy_addr, abi=_ONE_PROXY_NO_TC_ABI)
+        wallet_exec = w3.eth.contract(address=proxy_addr, abi=_EXECUTE_ABI)
+        wallet_fwd = w3.eth.contract(address=proxy_addr, abi=_FORWARD_ABI)
+        wallet_fwd_batch = w3.eth.contract(address=proxy_addr, abi=_FORWARD_BATCH_ABI)
+
+        pcalls_tc = [(0, noop_to, 0, noop_data)]
+        pcalls_no_tc = [(noop_to, 0, noop_data)]
+
+        patterns = [
+            # forward(address,uint256,bytes) — the canonical Polymarket ProxyWallet function.
+            # owner() returned our EOA; if forward() checks msg.sender==owner this passes.
+            ("wallet.forward(to,value,data)",
+             proxy_addr, wallet_fwd.encode_abi("forward", args=[
+                 w3.to_checksum_address(noop_to), 0, noop_data
+             ])),
+            # Batch forward variant
+            ("wallet.forward(calls[])",
+             proxy_addr, wallet_fwd_batch.encode_abi("forward", args=[
+                 [(w3.to_checksum_address(noop_to), 0, noop_data)]
+             ])),
+            ("factory.proxy(typeCode,to,value,data)",
+             factory_addr, factory_tc.encode_abi("proxy", args=[pcalls_tc])),
+            ("factory.proxy(to,value,data)",
+             factory_addr, factory_no_tc.encode_abi("proxy", args=[pcalls_no_tc])),
+            ("wallet.proxy(typeCode,to,value,data)",
+             proxy_addr, wallet_tc.encode_abi("proxy", args=[pcalls_tc])),
+            ("wallet.proxy(to,value,data)",
+             proxy_addr, wallet_no_tc.encode_abi("proxy", args=[pcalls_no_tc])),
+            ("wallet.execute(dest,value,func)",
+             proxy_addr, wallet_exec.encode_abi("execute", args=[
+                 w3.to_checksum_address(noop_to), 0, noop_data
+             ])),
+        ]
+
+        working = None
+        results = []  # (short_label, selector_or_OK)
+        short = {
+            "wallet.forward(to,value,data)": "fwd",
+            "wallet.forward(calls[])": "fwd[]",
+            "factory.proxy(typeCode,to,value,data)": "fac+tc",
+            "factory.proxy(to,value,data)": "fac",
+            "wallet.proxy(typeCode,to,value,data)": "wal+tc",
+            "wallet.proxy(to,value,data)": "wal",
+            "wallet.execute(dest,value,func)": "exec",
+        }
+        for label, target, calldata in patterns:
+            try:
+                await loop.run_in_executor(
+                    None, lambda t=target, d=calldata: w3.eth.call(
+                        {"from": acct.address, "to": t, "data": d}
+                    )
+                )
+                results.append((short.get(label, label), "OK"))
+                if working is None:
+                    working = label
+            except Exception as exc:
+                results.append((short.get(label, label), _revert_selector(exc)))
+
+        # ONE compact, phone-readable summary line. Copy THIS line to diagnose.
+        summary = " ".join(f"{k}={v}" for k, v in results)
+        log.critical(
+            f"[probe] SUMMARY | owner={owner_str} | match={owner_match} | "
+            f"working={working or 'NONE'} | {summary}"
+        )
+        if working is None:
+            log.warning(
+                "[probe] ALL 7 proxy patterns fail eth_call. If match=False the EOA in "
+                "POLYGON_PRIVATE_KEY does not control this proxy (redeem on polymarket.com "
+                "instead). If match=True and fwd=0x1c8a498f too, the wallet uses a "
+                "different function name — check Polygonscan for the proxy contract ABI."
+            )
+    except Exception as exc:
+        log.warning(f"[probe] Proxy startup probe failed: {exc!r}")
+
+
 async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = None) -> None:
     """Claim resolved ERC-1155 positions for pUSD. Never exits."""
-    log.info("Redemption loop starting [build: redeem-v6 direct CTF redeem (USDC.e) + sim diagnostics]...")
+    log.info("Redemption loop starting [build: redeem-v12 forward() hardcoded]...")
+
+    # Run a one-time startup probe so we know which proxy call pattern works
+    # without waiting for a real position to redeem. This logs proxy.owner()
+    # and which of the 5 ABI variants passes eth_call simulation.
+    asyncio.get_running_loop().create_task(_probe_proxy_at_startup())
+
     while True:
         await asyncio.sleep(REDEEM_INTERVAL)
 
@@ -42,16 +195,32 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
             try:
                 payout = pos.shares * pos.resolution  # resolution=1.0 → won
                 if payout > 0:
-                    await _redeem_position(
+                    redeemed_ok = await _redeem_position(
                         pos.condition_id, pos.token_id, pos.shares,
-                        pos.side, oracle.paper_trading,
+                        pos.side,
                     )
-                    # Credit bankroll only after on-chain call succeeds (or paper sim)
-                    async with oracle.bankroll_lock:
-                        oracle.bankroll += payout
+                    # PHANTOM-WIN LOCKDOWN: only credit bankroll when redemption
+                    # actually burned on-chain tokens for collateral. If no tokens
+                    # were found (a mis-scored "win" or an already-settled
+                    # position), _redeem_position returns False — crediting payout
+                    # here would invent money that doesn't exist on-chain. Book it
+                    # as no payout so the position's cost is realised as the loss
+                    # it actually was.
+                    if redeemed_ok:
+                        async with oracle.bankroll_lock:
+                            oracle.bankroll += payout
+                    else:
+                        log.warning(
+                            f"Redeem found no on-chain tokens for {pos.market_id} "
+                            f"(side={pos.side}, cond={pos.condition_id[:16]}…) — "
+                            "treating as no payout (phantom or already-settled). "
+                            "Bankroll NOT credited."
+                        )
+                        payout = 0.0
 
                 # Only mark redeemed after redemption succeeds — suppresses retries on tx revert
                 pos.redeemed = True
+                pos.redeem_attempts = 0
                 final_pnl = payout - pos.cost_basis
 
                 async with oracle.bankroll_lock:
@@ -76,7 +245,7 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
                     "resolution": pos.resolution,
                     "payout": payout,
                     "pnl": final_pnl,
-                    "paper": oracle.paper_trading,
+                    "paper": False,
                 }
                 await asyncio.get_running_loop().run_in_executor(None, append_trade, redeem_record)
                 oracle.pending_trade_events.append({
@@ -89,7 +258,7 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
                     "edge": 0.0,
                     "dollar_size": pos.cost_basis,
                     "pnl": round(final_pnl, 2),
-                    "paper": oracle.paper_trading,
+                    "paper": False,
                     "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 })
                 async with oracle.bankroll_lock:
@@ -98,12 +267,54 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
                     f"Redeemed {pos.market_id}: {pos.shares:.2f}sh "
                     f"→ {payout:.2f} pUSD (pnl={final_pnl:+.2f})"
                 )
+            except OnChainNotResolvedYet as exc:
+                # Transient: UMA/oracle hasn't settled this condition on-chain yet.
+                # Retry every cycle WITHOUT counting it against the give-up limit —
+                # on-chain settlement can lag the bot's price-feed resolution by
+                # several minutes, far longer than MAX_REDEEM_ATTEMPTS × 30s.
+                log.info(f"Redeem deferred — {pos.market_id}: {exc}")
             except Exception as exc:
-                log.error(f"Redemption failed for {pos.market_id}: {exc!r}")
+                pos.redeem_attempts += 1
+                MAX_REDEEM_ATTEMPTS = 3
+                if pos.redeem_attempts >= MAX_REDEEM_ATTEMPTS:
+                    # The on-chain proxy rejects our EOA as owner — this is expected when
+                    # POLYGON_PRIVATE_KEY is a CLOB API signing key that is NOT the owner
+                    # of the Polymarket proxy wallet. The bot cannot redeem on-chain in
+                    # this configuration. Action required: visit polymarket.com and redeem
+                    # the position manually to receive your winnings.
+                    log.critical(
+                        f"MANUAL REDEMPTION REQUIRED — {pos.market_id}: "
+                        f"won {payout:.2f} USDC.e but on-chain redemption failed {pos.redeem_attempts}x. "
+                        "The proxy wallet's registered owner does not match POLYGON_PRIVATE_KEY. "
+                        "Go to polymarket.com → your profile → open positions and click Redeem. "
+                        f"Condition: {pos.condition_id}  Token: {pos.token_id}"
+                    )
+                    pos.redeemed = True  # Stop retrying to avoid log spam every 30s
+                    async with oracle.bankroll_lock:
+                        oracle.open_positions.pop(order_id, None)
+                else:
+                    log.error(
+                        f"Redemption failed for {pos.market_id} "
+                        f"(attempt {pos.redeem_attempts}/{MAX_REDEEM_ATTEMPTS}): {exc!r}"
+                    )
 
 
 ZERO_ADDR = "0x0000000000000000000000000000000000000000"
 ZERO_BYTES32 = b"\x00" * 32
+
+
+def _to_bytes(data) -> bytes:
+    """Normalise web3.py ABI-encoded output to plain bytes.
+
+    web3.py v7 returns a hex string from encode_abi(); earlier versions returned
+    HexBytes (a bytes subclass). Both forms are handled so the code works across
+    versions without version-pinning.
+    """
+    if isinstance(data, (bytes, bytearray)):
+        return bytes(data)
+    if isinstance(data, str):
+        return bytes.fromhex(data[2:] if data.startswith(("0x", "0X")) else data)
+    return bytes(data)  # fallback: try bytes() constructor
 
 # ConditionalTokens (Gnosis CTF). redeemPositions burns the CALLER's own outcome
 # tokens and pays the collateral to the caller — no setApprovalForAll required.
@@ -199,7 +410,8 @@ _SAFE_ABI = [
     },
 ]
 
-# Polymarket "1proxy" (Magic/email accounts). proxy() runs calls as the proxy.
+# Polymarket "1proxy" — two variants tried at runtime (first sim win used).
+# Variant A: includes typeCode (uint8) as first field.
 _ONE_PROXY_ABI = [{
     "inputs": [{
         "name": "calls", "type": "tuple[]",
@@ -213,6 +425,93 @@ _ONE_PROXY_ABI = [{
     "name": "proxy", "outputs": [{"name": "", "type": "bytes[]"}],
     "stateMutability": "payable", "type": "function",
 }]
+# Variant B: no typeCode — just (address, uint256, bytes).
+_ONE_PROXY_NO_TC_ABI = [{
+    "inputs": [{
+        "name": "calls", "type": "tuple[]",
+        "components": [
+            {"name": "to", "type": "address"},
+            {"name": "value", "type": "uint256"},
+            {"name": "data", "type": "bytes"},
+        ],
+    }],
+    "name": "proxy", "outputs": [{"name": "", "type": "bytes[]"}],
+    "stateMutability": "payable", "type": "function",
+}]
+# Variant C: ERC-4337 / SimpleAccount style — single-call execute.
+_EXECUTE_ABI = [{
+    "inputs": [
+        {"name": "dest", "type": "address"},
+        {"name": "value", "type": "uint256"},
+        {"name": "func", "type": "bytes"},
+    ],
+    "name": "execute", "outputs": [],
+    "stateMutability": "nonpayable", "type": "function",
+}]
+# For reading the proxy's registered owner (view only, many naming conventions).
+_OWNER_VIEW_ABI = [
+    {"inputs": [], "name": "owner",
+     "outputs": [{"name": "", "type": "address"}],
+     "stateMutability": "view", "type": "function"},
+]
+# Variant D: Polymarket ProxyWallet canonical single-call.
+# selector 0xd7f31eb9 — owner() confirmed returning EOA, so this should pass
+# the msg.sender==owner access check when called directly from the EOA.
+_FORWARD_ABI = [{
+    "inputs": [
+        {"name": "_destination", "type": "address"},
+        {"name": "_value", "type": "uint256"},
+        {"name": "_data", "type": "bytes"},
+    ],
+    "name": "forward", "outputs": [{"name": "", "type": "bytes"}],
+    "stateMutability": "payable", "type": "function",
+}]
+# Variant E: Batch forward.
+_FORWARD_BATCH_ABI = [{
+    "inputs": [{"name": "calls", "type": "tuple[]",
+        "components": [
+            {"name": "to", "type": "address"},
+            {"name": "value", "type": "uint256"},
+            {"name": "data", "type": "bytes"},
+        ]}],
+    "name": "forward", "outputs": [{"name": "", "type": "bytes[]"}],
+    "stateMutability": "payable", "type": "function",
+}]
+
+
+def _extract_revert_hex(exc) -> str:
+    """Pull the raw revert hex out of a web3 ContractLogicError for decoding.
+
+    The first 4 bytes are the custom error selector; any remaining bytes are
+    ABI-encoded parameters (often addresses). Logging the full hex lets us
+    identify the error name from a 4-byte lookup.
+    """
+    # ContractLogicError sometimes carries data in exc.args[0] as a dict
+    if hasattr(exc, 'args') and exc.args:
+        arg = exc.args[0]
+        if isinstance(arg, (bytes, bytearray)):
+            return arg.hex()
+        if isinstance(arg, dict):
+            return str(arg.get('data') or arg)
+    return repr(exc)
+
+
+def _revert_selector(exc) -> str:
+    """Return just the 4-byte custom-error selector (e.g. '0x1c8a498f') if present.
+
+    Searches the exception's string form for the first 0x-prefixed hex blob and
+    returns its first 4 bytes. Falls back to a short repr so the summary line is
+    always compact and phone-readable.
+    """
+    import re
+    raw = _extract_revert_hex(exc)
+    m = re.search(r"0x[0-9a-fA-F]{8,}", raw)
+    if m:
+        return m.group(0)[:10]  # 0x + 8 hex chars = 4-byte selector
+    # 'execution reverted' with no data → empty revert (often an EOA/owner reject)
+    if "revert" in raw.lower():
+        return "empty-revert"
+    return raw[:40]
 
 
 async def _gas_fields(w3, loop) -> dict:
@@ -299,7 +598,7 @@ async def _detect_collateral(w3, ct, holder: str, cid_bytes: bytes, candidates, 
     return None, None, 0
 
 
-def _build_redeem_calls(w3, ct, collateral: str, cid_bytes: bytes):
+def _build_redeem_calls(w3, ct, collateral: str, cid_bytes: bytes, idx: int = 1):
     """Single call: ConditionalTokens.redeemPositions.
 
     This burns the holder's own outcome tokens and returns the underlying
@@ -308,12 +607,16 @@ def _build_redeem_calls(w3, ct, collateral: str, cid_bytes: bytes):
     succeed once the condition is resolved on-chain. (The CtfCollateralAdapter
     pUSD path reverts with no reason here, so we redeem the underlying instead;
     bankroll reconciliation counts USDC.e alongside pUSD.)
+
+    Only the detected indexSet (idx) is passed — passing a second indexSet where
+    the holder has 0 balance is harmless per the ERC-1155 spec but some adapter
+    wrappers revert on zero-balance burns, so we keep the call tight.
     """
     from polymarket.execution.wallet import CONDITIONAL_TOKENS
 
     redeem_data = ct.encode_abi(
         "redeemPositions",
-        args=[w3.to_checksum_address(collateral), ZERO_BYTES32, cid_bytes, [1, 2]],
+        args=[w3.to_checksum_address(collateral), ZERO_BYTES32, cid_bytes, [idx]],
     )
     return [(w3.to_checksum_address(CONDITIONAL_TOKENS), redeem_data)]
 
@@ -338,45 +641,36 @@ async def _execute_calls(w3, acct, pk: str, proxy: str, calls, loop) -> str:
         return last
 
     proxy_addr = w3.to_checksum_address(proxy)
-    safe = w3.eth.contract(address=proxy_addr, abi=_SAFE_ABI)
-    owners = None
+
+    # Startup probe confirmed: wallet.forward(address,uint256,bytes) is the correct
+    # function for this Polymarket ProxyWallet (selector 0xd7f31eb9, match=True).
+    # The Gnosis Safe detection (getOwners) was incorrectly returning a non-empty
+    # list on the ProxyWallet (it has a function matching the ABI selector), which
+    # routed redemptions through execTransaction instead of forward() — causing the
+    # "registered owner does not match" revert. Skip Safe detection entirely.
+    # All other patterns (proxy/execute) hit the fallback and revert with 0x1c8a498f.
+    # Call forward() directly from the EOA — owner()==EOA so msg.sender==owner passes.
+    single_to, single_data = calls[0]
+    wallet_fwd = w3.eth.contract(address=proxy_addr, abi=_FORWARD_ABI)
+    calldata = wallet_fwd.encode_abi("forward", args=[
+        w3.to_checksum_address(single_to), 0, _to_bytes(single_data)
+    ])
+
     try:
-        owners = await loop.run_in_executor(None, lambda: safe.functions.getOwners().call())
-    except Exception:
-        owners = None  # Not a Safe — use the 1proxy factory path
-
-    if owners is not None:
-        # 1-of-1 Safe pre-validated signature: {r = owner, s = 0, v = 1}. The
-        # Safe accepts it without ECDSA recovery because msg.sender == owner.
-        # execTransaction runs one call at a time, so send them sequentially.
-        owner = acct.address
-        sig = bytes.fromhex(owner[2:].rjust(64, "0")) + ZERO_BYTES32 + b"\x01"
-        last = None
-        for to, data in calls:
-            exec_data = safe.encode_abi(
-                "execTransaction",
-                args=[w3.to_checksum_address(to), 0, data, 0,
-                      0, 0, 0, ZERO_ADDR, ZERO_ADDR, sig],
+        await loop.run_in_executor(
+            None, lambda: w3.eth.call(
+                {"from": acct.address, "to": proxy_addr, "data": calldata}
             )
-            log.info(f"[live] Safe.execTransaction → {to[:10]}… (owners={len(owners)})")
-            tx_hash, receipt = await _send_tx(w3, acct, pk, proxy_addr, exec_data, loop)
-            if receipt.status != 1:
-                raise RuntimeError(f"Safe execTransaction reverted: {tx_hash.hex()}")
-            last = tx_hash.hex()
-        return last
+        )
+    except Exception as sim_exc:
+        raise RuntimeError(
+            f"[live] forward() sim failed: {_extract_revert_hex(sim_exc)}"
+        )
 
-    # 1proxy: call proxy() on the FACTORY (not the wallet) — it routes the batch
-    # to the caller's proxy via _msgSender(). All calls run atomically.
-    from polymarket.execution.wallet import PROXY_WALLET_FACTORY
-
-    factory_addr = w3.to_checksum_address(PROXY_WALLET_FACTORY)
-    factory = w3.eth.contract(address=factory_addr, abi=_ONE_PROXY_ABI)
-    pcalls = [(0, w3.to_checksum_address(to), 0, data) for to, data in calls]
-    fdata = factory.encode_abi("proxy", args=[pcalls])
-    log.info(f"[live] Factory.proxy() batch of {len(pcalls)} → proxy {proxy_addr[:10]}…")
-    tx_hash, receipt = await _send_tx(w3, acct, pk, factory_addr, fdata, loop, gas=700_000)
+    log.info("[live] forward() sim OK — submitting tx")
+    tx_hash, receipt = await _send_tx(w3, acct, pk, proxy_addr, calldata, loop, gas=700_000)
     if receipt.status != 1:
-        raise RuntimeError(f"Factory proxy() reverted: {tx_hash.hex()}")
+        raise RuntimeError(f"wallet.forward() reverted on-chain: {tx_hash.hex()}")
     return tx_hash.hex()
 
 
@@ -385,19 +679,23 @@ async def _redeem_position(
     token_id: str,
     shares: float,
     side: str = "YES",
-    paper: bool = True,
-) -> None:
+) -> bool:
     """Redeem a resolved position into pUSD via the V2 CtfCollateralAdapter.
 
     Tokens are held by the Polymarket proxy wallet (the CLOB funder), so the
     redemption is routed through that proxy — a direct EOA call finds no tokens
     and reverts. The collateral token is auto-detected by matching the holder's
     on-chain ERC-1155 balance.
-    """
-    if paper:
-        log.info(f"[paper] Simulating redemption: {condition_id} {shares:.2f}sh")
-        return
 
+    Returns:
+        True  — tokens were actually redeemed on-chain.
+        False — the holder owns no outcome tokens for this condition, so nothing
+                was redeemed (phantom win or already-settled). The caller must NOT
+                credit the bankroll in this case.
+    Raises:
+        OnChainNotResolvedYet — settlement hasn't hit the chain yet (retry later).
+        RuntimeError / Exception — a real failure that should count toward retries.
+    """
     from polymarket.execution.wallet import (
         PUSD_ADDRESS, USDCE_ADDRESS, CONDITIONAL_TOKENS, get_web3,
     )
@@ -416,7 +714,18 @@ async def _redeem_position(
     loop = asyncio.get_running_loop()
 
     ct = w3.eth.contract(address=w3.to_checksum_address(CONDITIONAL_TOKENS), abi=_CT_ABI)
-    cid_bytes = bytes.fromhex(condition_id.replace("0x", "").zfill(64))
+    _stripped_cid = condition_id.replace("0x", "").replace("0X", "").strip()
+    if len(_stripped_cid) != 64:
+        raise RuntimeError(
+            f"conditionId must be exactly 64 hex chars (bytes32), "
+            f"got {len(_stripped_cid)} chars: {condition_id!r}"
+        )
+    try:
+        cid_bytes = bytes.fromhex(_stripped_cid)
+    except ValueError as _hex_err:
+        raise RuntimeError(
+            f"conditionId contains non-hex characters: {condition_id!r} — {_hex_err}"
+        )
     holder = w3.to_checksum_address(proxy) if proxy else acct.address
 
     # Confirm which collateral the holder owns tokens for (USDC.e is the CTF
@@ -425,17 +734,20 @@ async def _redeem_position(
         w3, ct, holder, cid_bytes, [USDCE_ADDRESS, PUSD_ADDRESS], loop
     )
     if collateral is None:
-        log.warning(
-            f"[live] No outcome-token balance for {condition_id[:16]}… at holder "
-            f"{holder[:10]}… — already redeemed on-chain, or held elsewhere. "
-            "Attempting USDC.e redemption anyway."
-        )
-        collateral = USDCE_ADDRESS
-    else:
+        # Balance is 0 for all (collateral, indexSet) combinations.
+        # The position has likely already been redeemed on-chain (manually or
+        # by Polymarket's auto-settlement), OR it was mis-scored as a win and the
+        # tokens were never held. Nothing to burn. Return False so the caller does
+        # NOT credit bankroll for a payout that has no on-chain backing.
         log.info(
-            f"[live] Holder {holder[:10]}… owns {bal} units "
-            f"(collateral={collateral[:10]}…, idx={idx})"
+            f"[live] No outcome-token balance for {condition_id[:16]}… at "
+            f"{holder[:10]}… — already redeemed or not held here. Skipping."
         )
+        return False
+    log.info(
+        f"[live] Holder {holder[:10]}… owns {bal} units "
+        f"(collateral={collateral[:10]}…, idx={idx})"
+    )
 
     # Diagnostics: a winning bet only redeems once the on-chain oracle has
     # reported the condition. payoutDenominator==0 means resolution hasn't hit the
@@ -455,8 +767,9 @@ async def _redeem_position(
         log.info(f"[live] On-chain state: payoutDenominator={denom}, adapterApproved={approved}")
         if denom == 0:
             # Raise (not return) so the loop does NOT credit the bankroll or mark
-            # the position redeemed — it retries on the next cycle.
-            raise RuntimeError(
+            # the position redeemed — it retries on the next cycle. Use the
+            # transient exception so settlement lag never burns a give-up attempt.
+            raise OnChainNotResolvedYet(
                 f"condition {condition_id[:16]}… not resolved on-chain yet "
                 "(payoutDenominator=0) — will retry"
             )
@@ -465,7 +778,8 @@ async def _redeem_position(
     except Exception as exc:
         log.warning(f"[live] On-chain resolution probe failed: {exc!r}")
 
-    calls = _build_redeem_calls(w3, ct, collateral, cid_bytes)
+    calls = _build_redeem_calls(w3, ct, collateral, cid_bytes, idx=idx if idx else 1)
     tx_hex = await _execute_calls(w3, acct, pk, proxy, calls, loop)
 
     log.info(f"[live] Redeemed {condition_id[:16]}…: {shares:.2f}sh → USDC.e, tx {tx_hex}")
+    return True

@@ -23,11 +23,6 @@ from polymarket.risk import RiskManager
 
 log = logging.getLogger(__name__)
 
-# Use oracle.paper_trading exclusively; module-level flag only for _cancel_all
-PAPER_TRADING = os.getenv("PAPER_TRADING", "true").lower() == "true"
-# Set PAPER_FRICTION=false in unit tests that need exact bankroll values
-PAPER_FRICTION: bool = os.getenv("PAPER_FRICTION", "true").lower() != "false"
-
 ORDER_CONCURRENCY = 3
 FILL_POLL_INTERVAL = 1.0   # seconds between fill status checks
 FOK_TIMEOUT = float(os.getenv("FOK_TIMEOUT_SECONDS", "5"))    # FOK considered failed after
@@ -57,13 +52,12 @@ async def oms_loop(
 ) -> None:
     """Consume and execute orders from all strategy queues. Never exits."""
     sem = asyncio.Semaphore(ORDER_CONCURRENCY)
-    log.info(f"OMS starting (paper_trading={oracle.paper_trading})")
+    log.info("OMS starting (live mode)")
 
     # Sync pUSD balance + allowance with the CLOB before accepting any orders.
     # This is Polymarket's "deposit wallet flow" — without it the CLOB rejects
     # every order with "maker address not allowed". Safe to call on every startup.
-    if not oracle.paper_trading:
-        await _register_balance_allowance()
+    await _register_balance_allowance()
 
     while True:
         intent = await order_queue.get()
@@ -126,10 +120,6 @@ async def _process_order_inner(
             f"${intent.get('dollar_size', 0):.2f} @ {intent.get('price', 0):.3f}"
         )
 
-        if oracle.paper_trading:
-            await _paper_fill(intent, order_id, oracle, risk_mgr, is_momentum)
-            return
-
         # Live trading — enforce Polymarket's 5-share minimum for LIMIT orders.
         # FOK market orders use dollar amount (different exchange minimum applies).
         order_type_str = intent.get("order_type", "GTC")
@@ -158,152 +148,6 @@ async def _process_order_inner(
             log.error(f"[OMS] Order submission failed: {exc!r}")
             if is_momentum:
                 oracle.strategy_phase = "HOLD"
-
-
-async def _paper_fill(
-    intent: dict,
-    order_id: str,
-    oracle: OracleBuffer,
-    risk_mgr: RiskManager,
-    is_momentum: bool = False,
-) -> None:
-    """Simulate a fill in paper trading mode with realistic live-trading friction.
-
-    When PAPER_FRICTION=true (default), three live gaps are modelled:
-    1. FOK rejection (15%): thin T<10s book; other bots hit the same ask level.
-       Rejection IS written to trade history and dashboard so the rate is auditable.
-    2. Slippage (0–2 ticks uniform): CLOB WS price is 0.5–2s stale at fill time.
-    3. Taker fee deducted from bankroll: CLOB charges fee at fill, not at signal.
-    """
-    import random
-    from polymarket.fair_value import dynamic_taker_fee
-
-    if is_momentum:
-        oracle.strategy_phase = "FILL"
-    quoted_price = intent.get("price", 0.5)
-    dollar_size = intent.get("dollar_size", 0.0)
-    loop = asyncio.get_running_loop()
-
-    if intent.get("order_type") == "POST_ONLY":
-        log.info(f"[OMS/paper] POST_ONLY placed: {order_id} @ {quoted_price:.3f}")
-        return  # Maker quotes — no slippage, no rejection, no phase change
-
-    if PAPER_FRICTION:
-        # Gap 1: FOK rejection — 15% of FOK orders get no fill at thin T<10s books.
-        # Write to history so rejection rate is visible in calibrator and dashboard.
-        if intent.get("order_type") == "FOK" and random.random() < 0.15:
-            log.info(
-                f"[OMS/paper] FOK REJECTED (thin book): "
-                f"{intent.get('strategy')} {intent.get('side')} @ {quoted_price:.3f}"
-            )
-            reject_record = {
-                "order_id": order_id,
-                "action": "rejected",
-                "strategy": intent.get("strategy"),
-                "market_id": intent.get("market_id"),
-                "side": intent.get("side"),
-                "entry_price": quoted_price,
-                "dollar_size": dollar_size,
-                "pnl": 0.0,
-                "paper": True,
-                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            }
-            await loop.run_in_executor(None, append_trade, reject_record)
-            oracle.pending_trade_events.append({
-                "id": order_id,
-                "market_id": intent.get("market_id") or "unknown",
-                "strategy": intent.get("strategy") or "?",
-                "side": intent.get("side") or "YES",
-                "entry_price": quoted_price,
-                "fair_value": intent.get("fair") or quoted_price,
-                "edge": intent.get("edge") or 0.0,
-                "dollar_size": 0.0,
-                "action": "rejected",
-                "pnl": 0.0,
-                "paper": True,
-                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            })
-            if is_momentum:
-                oracle.strategy_phase = "HOLD"
-            return
-
-        # Gap 2: Slippage — 0 to 2 ticks worse than quoted ask (each tick = $0.01)
-        slip_ticks = random.randint(0, 2)
-        fill_price = min(quoted_price + slip_ticks * 0.01, 0.99)
-
-        # Gap 3: Taker fee deducted from bankroll separately (matches live CLOB settlement)
-        taker_fee = dynamic_taker_fee(fill_price) * dollar_size
-        total_cost = dollar_size + taker_fee
-    else:
-        fill_price = quoted_price
-        slip_ticks = 0
-        taker_fee = 0.0
-        total_cost = dollar_size
-
-    actual_shares = dollar_size / max(fill_price, 0.01)
-
-    pos = OpenPosition(
-        market_id=intent.get("market_id") or "unknown",
-        condition_id=intent.get("condition_id") or "unknown",
-        token_id=intent.get("token_id") or intent.get("yes_token_id") or "unknown",
-        side=intent.get("side", "YES"),
-        shares=actual_shares,
-        cost_basis=dollar_size,
-        window_open_price=intent.get("window_open_price", 0.0),
-        strategy=intent.get("strategy", "A"),
-    )
-    async with oracle.bankroll_lock:
-        # Sufficiency backstop: never let total committed cost exceed available
-        # bankroll. Defends against concurrent orders over-committing capital
-        # regardless of per-strategy sizing bugs.
-        if total_cost > oracle.bankroll:
-            log.warning(
-                f"[OMS/paper] Insufficient bankroll: order needs ${total_cost:.2f} "
-                f"but only ${oracle.bankroll:.2f} available — rejecting"
-            )
-            if is_momentum:
-                oracle.strategy_phase = "HOLD"
-            return
-        oracle.open_positions[order_id] = pos
-        oracle.bankroll -= total_cost
-        oracle.peak_bankroll = max(oracle.peak_bankroll, oracle.bankroll)
-
-    trade_record = {
-        "order_id": order_id,
-        "strategy": intent.get("strategy"),
-        "market_id": intent.get("market_id"),
-        "side": intent.get("side"),
-        "fair_value": intent.get("fair"),
-        "entry_price": fill_price,
-        "quoted_price": quoted_price,
-        "slippage": round(fill_price - quoted_price, 3),
-        "taker_fee": round(taker_fee, 4),
-        "edge": intent.get("edge"),
-        "shares": actual_shares,
-        "dollar_size": dollar_size,
-        "paper": True,
-    }
-    await loop.run_in_executor(None, append_trade, trade_record)
-    oracle.pending_trade_events.append({
-        "id": order_id,
-        "market_id": intent.get("market_id") or "unknown",
-        "strategy": intent.get("strategy") or "?",
-        "side": intent.get("side") or "YES",
-        "entry_price": fill_price,
-        "fair_value": intent.get("fair") or fill_price,
-        "edge": intent.get("edge") or 0.0,
-        "dollar_size": dollar_size,
-        "slippage": round(fill_price - quoted_price, 3),
-        "pnl": None,
-        "paper": True,
-        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-    })
-    log.info(
-        f"[OMS/paper] Filled: {order_id} {actual_shares:.2f}sh @ {fill_price:.3f}"
-        + (f" (slip +{slip_ticks}t, fee ${taker_fee:.3f})" if PAPER_FRICTION else "")
-    )
-    if is_momentum:
-        oracle.strategy_phase = "HOLD"
 
 
 async def _register_balance_allowance() -> None:
@@ -526,9 +370,6 @@ async def _track_until_terminal(
 
 async def _cancel_all(oracle: OracleBuffer) -> None:
     """Cancel all open maker quotes."""
-    if oracle.paper_trading:
-        log.info("[OMS/paper] cancel_all (no-op in paper mode)")
-        return
     log.info("[OMS] Cancelling all open orders")
     try:
         from polymarket.execution.wallet import get_clob_client

@@ -52,33 +52,8 @@ async def chainlink_rtds_loop(oracle: OracleBuffer) -> None:
                     await _resolve_previous_window(oracle, loop)
                     market.window_open_price = oracle.btc_price
                     oracle.active_market = market
-            elif oracle.paper_trading:
-                # Paper trading: derive window from system clock — no Polymarket needed
-                market = _synthetic_paper_market(oracle.btc_price)
-                if (
-                    oracle.active_market is None
-                    or oracle.active_market.market_id != market.market_id
-                ):
-                    if oracle.btc_price > 0:
-                        log.info(f"Paper window: {market.market_id} (synthetic) open@{oracle.btc_price:.2f}")
-                        await _resolve_previous_window(oracle, loop)
-                        oracle.active_market = market
-                    else:
-                        log.debug("Waiting for BTC price before creating paper window...")
-                elif (
-                    oracle.active_market is not None
-                    and oracle.active_market.window_open_price == 0.0
-                    and oracle.btc_price > 0
-                ):
-                    # Race condition fix: price arrived after window was created
-                    oracle.active_market.window_open_price = oracle.btc_price
-                    log.info(f"Backfilled window_open_price: {oracle.btc_price:.2f}")
         except Exception as exc:
             log.warning(f"Gamma API error: {exc!r}")
-            if oracle.paper_trading and oracle.btc_price > 0:
-                market = _synthetic_paper_market(oracle.btc_price)
-                if oracle.active_market is None:
-                    oracle.active_market = market  # no previous window to resolve
 
         await asyncio.sleep(POLL_INTERVAL)
 

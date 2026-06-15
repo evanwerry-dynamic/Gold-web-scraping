@@ -135,15 +135,14 @@ async def halt():
     oracle.emergency_halt = True
     log.warning("EMERGENCY HALT ACTIVATED via dashboard")
     # Best-effort cancel all live CLOB orders
-    if not oracle.paper_trading:
-        try:
-            from polymarket.execution.wallet import get_clob_client
-            client = get_clob_client()
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(None, client.cancel_all)
-            log.info("Cancel-all sent to CLOB on halt")
-        except Exception as exc:
-            log.warning(f"Cancel-all on halt failed: {exc!r}")
+    try:
+        from polymarket.execution.wallet import get_clob_client
+        client = get_clob_client()
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, client.cancel_all)
+        log.info("Cancel-all sent to CLOB on halt")
+    except Exception as exc:
+        log.warning(f"Cancel-all on halt failed: {exc!r}")
     return JSONResponse({"halted": True})
 
 

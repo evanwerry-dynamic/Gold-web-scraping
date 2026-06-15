@@ -24,9 +24,6 @@ log = logging.getLogger(__name__)
 
 async def startup_position_sync(oracle: OracleBuffer) -> None:
     """Query Data API at boot, inject untracked positions into oracle."""
-    if os.getenv("PAPER_TRADING", "true").lower() == "true":
-        return
-
     import requests
 
     pk = os.getenv("POLYGON_PRIVATE_KEY", "").strip()

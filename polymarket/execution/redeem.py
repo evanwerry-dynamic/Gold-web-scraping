@@ -178,8 +178,7 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
     # Run a one-time startup probe so we know which proxy call pattern works
     # without waiting for a real position to redeem. This logs proxy.owner()
     # and which of the 5 ABI variants passes eth_call simulation.
-    if not oracle.paper_trading:
-        asyncio.get_running_loop().create_task(_probe_proxy_at_startup())
+    asyncio.get_running_loop().create_task(_probe_proxy_at_startup())
 
     while True:
         await asyncio.sleep(REDEEM_INTERVAL)
@@ -198,7 +197,7 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
                 if payout > 0:
                     redeemed_ok = await _redeem_position(
                         pos.condition_id, pos.token_id, pos.shares,
-                        pos.side, oracle.paper_trading,
+                        pos.side,
                     )
                     # PHANTOM-WIN LOCKDOWN: only credit bankroll when redemption
                     # actually burned on-chain tokens for collateral. If no tokens
@@ -246,7 +245,7 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
                     "resolution": pos.resolution,
                     "payout": payout,
                     "pnl": final_pnl,
-                    "paper": oracle.paper_trading,
+                    "paper": False,
                 }
                 await asyncio.get_running_loop().run_in_executor(None, append_trade, redeem_record)
                 oracle.pending_trade_events.append({
@@ -259,7 +258,7 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
                     "edge": 0.0,
                     "dollar_size": pos.cost_basis,
                     "pnl": round(final_pnl, 2),
-                    "paper": oracle.paper_trading,
+                    "paper": False,
                     "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 })
                 async with oracle.bankroll_lock:
@@ -680,7 +679,6 @@ async def _redeem_position(
     token_id: str,
     shares: float,
     side: str = "YES",
-    paper: bool = True,
 ) -> bool:
     """Redeem a resolved position into pUSD via the V2 CtfCollateralAdapter.
 
@@ -690,7 +688,7 @@ async def _redeem_position(
     on-chain ERC-1155 balance.
 
     Returns:
-        True  — tokens were actually redeemed on-chain (or paper-simulated).
+        True  — tokens were actually redeemed on-chain.
         False — the holder owns no outcome tokens for this condition, so nothing
                 was redeemed (phantom win or already-settled). The caller must NOT
                 credit the bankroll in this case.
@@ -698,10 +696,6 @@ async def _redeem_position(
         OnChainNotResolvedYet — settlement hasn't hit the chain yet (retry later).
         RuntimeError / Exception — a real failure that should count toward retries.
     """
-    if paper:
-        log.info(f"[paper] Simulating redemption: {condition_id} {shares:.2f}sh")
-        return True
-
     from polymarket.execution.wallet import (
         PUSD_ADDRESS, USDCE_ADDRESS, CONDITIONAL_TOKENS, get_web3,
     )

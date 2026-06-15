@@ -57,13 +57,11 @@ async def run() -> None:
     if initial_bankroll != raw_bankroll:
         log.warning(f"INITIAL_BANKROLL={raw_bankroll} is not positive — defaulting to $500")
 
-    paper = os.getenv("PAPER_TRADING", "true").lower() == "true"
     has_key = bool(os.getenv("POLYGON_PRIVATE_KEY", "").strip())
 
-    log.info(f"Mad Scientist env: INITIAL_BANKROLL={initial_bankroll}, "
-             f"PAPER_TRADING={paper}, KEY_PRESENT={has_key}")
+    log.info(f"Mad Scientist env: INITIAL_BANKROLL={initial_bankroll}, LIVE=True, KEY_PRESENT={has_key}")
 
-    oracle = OracleBuffer(bankroll=initial_bankroll, paper_trading=paper)
+    oracle = OracleBuffer(bankroll=initial_bankroll)
     restore_state(oracle)
 
     # One-time startup sync: inject any on-chain positions (ghosts, pre-bot trades)

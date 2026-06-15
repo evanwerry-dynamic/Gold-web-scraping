@@ -111,8 +111,8 @@ class OracleBuffer:
     # Strategy state for dashboard
     strategy_phase: str = "SCAN"   # SCAN | FAIR | EDGE | LIMIT | FILL | HOLD
 
-    # Paper trading flag
-    paper_trading: bool = True
+    # Paper trading flag (kept for test compatibility; always False in production)
+    paper_trading: bool = False
 
     # Startup barrier: set by the first price feed message, awaited by every
     # strategy loop. Without this, strategies crash on startup with AttributeError.

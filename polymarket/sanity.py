@@ -45,17 +45,14 @@ async def sanity_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
     while True:
         await asyncio.sleep(SANITY_INTERVAL)
         await _check_ghost_positions(oracle)
-        # Gas and allowance checks only apply to live trading — paper mode
-        # has no wallet, so these would always fire false CRITICAL alerts.
-        if not oracle.paper_trading:
-            # Each check returns True when it requires a halt. We aggregate so the
-            # halt can be AUTO-CLEARED once every recoverable condition is healthy
-            # again — a transient low-gas/RPC blip must not halt trading forever.
-            halt_needed = False
-            halt_needed |= await _check_gas(oracle)
-            halt_needed |= await _check_pusd_allowance(oracle)
-            halt_needed |= await _check_bankroll_vs_chain(oracle)
-            _apply_halt_decision(oracle, halt_needed)
+        # Each check returns True when it requires a halt. We aggregate so the
+        # halt can be AUTO-CLEARED once every recoverable condition is healthy
+        # again — a transient low-gas/RPC blip must not halt trading forever.
+        halt_needed = False
+        halt_needed |= await _check_gas(oracle)
+        halt_needed |= await _check_pusd_allowance(oracle)
+        halt_needed |= await _check_bankroll_vs_chain(oracle)
+        _apply_halt_decision(oracle, halt_needed)
         _check_ws_freshness(oracle)
 
         # Midnight daily reset — allows trading to resume after a daily loss halt
@@ -74,10 +71,6 @@ async def sanity_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
 
 async def _check_ghost_positions(oracle: OracleBuffer) -> None:
     """Compare bot-tracked positions against CLOB ground truth."""
-    import os
-    if os.getenv("PAPER_TRADING", "true").lower() == "true":
-        return  # No CLOB positions in paper mode
-
     try:
         # Positions live on the Polymarket Data API, not the CLOB client
         # (py_clob_client_v2 has no get_positions method). Query by wallet.
@@ -175,7 +168,7 @@ async def _check_ghost_positions(oracle: OracleBuffer) -> None:
             )
 
             # Attempt on-chain redemption using the confirmed forward() ABI.
-            if _hex_ok and condition_id and size > 0 and not oracle.paper_trading:
+            if _hex_ok and condition_id and size > 0:
                 try:
                     from polymarket.execution.redeem import _redeem_position
                     # Data API size may be in raw 1e6 units or in human-readable shares.
@@ -367,10 +360,6 @@ async def _check_bankroll_vs_chain(oracle: OracleBuffer) -> bool:
     Redemptions pay out USDC.e while trading uses pUSD, so both are counted —
     otherwise a freshly redeemed win looks like a 20%+ shortfall and false-halts.
     """
-    import os
-    if os.getenv("PAPER_TRADING", "true").lower() == "true":
-        return False  # Nothing to reconcile in paper mode
-
     try:
         chain_balance = await get_collateral_balance()
         # A reading of exactly 0 while we believe we hold funds is almost always

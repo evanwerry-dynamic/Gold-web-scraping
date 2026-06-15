@@ -80,11 +80,16 @@ async def run() -> None:
     # they survive redeploys. Out-of-range values are dropped, not clamped.
     # Old wrong defaults are skipped so code fixes take effect without manual
     # DB cleanup — only restore values that differ from the known bad defaults.
+    # Each key maps to a SET of persisted values that are known to be wrong and
+    # should be discarded in favour of the current code default. 0.07/0.09 net
+    # edge demanded a ~10c market misprice that never occurs in liquid crypto
+    # markets — both blocked every Strategy A trade. 12/15s entry windows were
+    # latency buffers superseded by the full-window + edge-gate architecture.
     _OLD_BAD_DEFAULTS = {
-        "min_edge_net": 0.07,
-        "entry_seconds_before_close": 12.0,
-        "min_order_size_usd": 0.0,
-        "min_delta_threshold": 0.001,  # 0.10% was too high — blocked all normal-vol signals
+        "min_edge_net": {0.07, 0.09},
+        "entry_seconds_before_close": {12.0, 15.0},
+        "min_order_size_usd": {0.0},
+        "min_delta_threshold": {0.001},  # 0.10% was too high — blocked all normal-vol signals
     }
     try:
         from polymarket.data import load_state
@@ -98,7 +103,7 @@ async def run() -> None:
             if not (lo <= fv <= hi):
                 continue
             # Skip if this matches a known-wrong old default — let the new code default win
-            if _OLD_BAD_DEFAULTS.get(k) == fv:
+            if fv in _OLD_BAD_DEFAULTS.get(k, set()):
                 log.info(f"Skipping stale param {k}={fv} (old wrong default) — using new default")
                 continue
             LIVE_PARAMS[k] = fv

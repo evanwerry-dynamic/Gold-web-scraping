@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 # Env-var defaults for initial startup (overridden by LIVE_PARAMS at runtime)
 _ENTRY_WINDOW_SECONDS_DEFAULT = float(os.getenv("ENTRY_SECONDS_BEFORE_CLOSE", "295"))  # full 5-min window; edge gate blocks repriced entries
 _MIN_DELTA_DEFAULT = float(os.getenv("MIN_DELTA_THRESHOLD", "0.0003"))  # 0.03% — typical BTC 5-min move is 0.02-0.05%; 0.10% was too high and blocked all normal-vol signals
-_MIN_EDGE_NET_DEFAULT = float(os.getenv("MIN_EDGE_NET", "0.05"))  # 5¢ net after fees — 7¢ was too tight (blocked valid edge after dynamic fee)
+_MIN_EDGE_NET_DEFAULT = float(os.getenv("MIN_EDGE_NET", "0.02"))  # 2¢ net after fees. Realistic taker edge in the oracle-lag window is 1-3.5¢; 5¢+ blocked every trade (market never misprices a liquid binary by 5¢+fee). Keeps a small +EV margin above breakeven.
 # Minimum order size in USD. Paper trading: any amount > 0 works — 0.50 allows
 # a $15 bankroll at 5% Kelly ($0.75) to fire. Live CLOB enforces its own minimum
 # (~$1 for FOK market orders) separately in the OMS exchange-minimum check.

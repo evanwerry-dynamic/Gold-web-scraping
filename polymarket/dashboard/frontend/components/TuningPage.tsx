@@ -21,22 +21,22 @@ const LEVERS: {
   {
     key: "min_z_score",
     label: "Conviction (z-score)",
-    unit: "min |z| = δ / (σ·√T)",
-    effect: "Strategy A conviction gate — scales the required move with volatility. 0.674≈fair 0.75, 1.04≈fair 0.85, 0=disabled. Lower this to let more Strategy A signals through; raise to demand more decisive moves.",
+    unit: "min |z| = δ / (σ_eff·√T)",
+    effect: "Strategy A conviction gate. σ_eff = max(30s_realized, |δ|/√elapsed) — prevents GARCH lag from inflating z after sharp moves. 1.5 ≈ 93% model confidence (recommended). 0.674 ≈ 75% — too low, fees eat the edge. 2.0 ≈ 97.7% — only very decisive moves.",
     fmt: (v) => v.toFixed(2),
   },
   {
     key: "min_delta_threshold",
     label: "Min BTC Move",
     unit: "fraction (0.001 = 0.10%)",
-    effect: "Higher = only trade decisive BTC moves. Raise toward 0.002 if win rate drifts down.",
+    effect: "Absolute δ floor before z-score is computed. Blocks pure-noise signals on a flat tape. 0.0003 = 0.03% (recommended). Raise toward 0.001 if win rate drifts down.",
     fmt: (v) => `${(v * 100).toFixed(3)}%`,
   },
   {
     key: "entry_seconds_before_close",
     label: "Entry Window",
     unit: "seconds before close",
-    effect: "How early before window close the strategy may fire. Lower = more certainty, thinner books.",
+    effect: "How early before window close Strategy A may fire. 60s (default): direction committed, book may not have fully repriced yet (Chainlink lag ~10s). <30s: ask often 0.95+ with no edge. >120s: BTC has too much time to reverse the move.",
     fmt: (v) => `${v.toFixed(0)}s`,
   },
   {
@@ -78,14 +78,14 @@ const LEVERS: {
     key: "maker_max_sigma",
     label: "Maker Max Vol",
     unit: "σ per second",
-    effect: "Strategy B pulls all quotes when realized vol exceeds this (trending market → adverse selection). Higher = quote through choppier tape; lower = only quote in calm markets.",
+    effect: "Strategy B pulls all quotes when σ_eff exceeds this. 0.00015 = typical calm BTC vol (~0.015%/s). When BTC moves sharply the GARCH-adjusted σ_eff rises above this threshold, pulling all quotes automatically. Only quote in quiet, coin-flip markets.",
     fmt: (v) => v.toFixed(5),
   },
   {
     key: "maker_fair_band",
     label: "Maker Fair Band",
     unit: "± around 0.50",
-    effect: "Strategy B only quotes when fair value sits within 0.5±band (near coin-flip). Higher = quote in more directional markets; lower = only quote true 50/50 markets.",
+    effect: "Strategy B only quotes when fair ∈ [0.5−band, 0.5+band]. 0.05 (default, recommended): true coin-flip zone where uninformed and informed flow are balanced. At ±0.15 you quote directional markets — every fill comes from someone who knows BTC direction (Glosten-Milgrom adverse selection). Keep ≤0.05.",
     fmt: (v) => `±${v.toFixed(2)}`,
   },
 ];

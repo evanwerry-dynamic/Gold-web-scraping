@@ -209,9 +209,15 @@ async def maker_loop(
 
         secs_left = oracle.window_seconds_remaining()
 
+        # Skip quoting until we have received at least one real orderbook snapshot.
+        # Default yes_ask/no_ask = 0.85 is a placeholder — quoting against it means
+        # resting at prices set by an initialiser, not the actual market.
+        if market.last_book_update_ts == 0.0:
+            log.debug("[B] No orderbook yet for this market — waiting")
+            continue
+
         # M5: skip quoting when orderbook data is stale (>10s without book update)
-        if (market.last_book_update_ts > 0
-                and time.time() - market.last_book_update_ts > 10):
+        if time.time() - market.last_book_update_ts > 10:
             await _pull("orderbook stale")
             continue
 

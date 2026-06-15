@@ -1,20 +1,19 @@
 """
-Strategy A: Opportunistic momentum signal loop.
+Strategy A: Late-window momentum signal loop.
 
 Entry logic:
-- Scans the entire 5-minute window (not just the final N seconds)
-- Z-score gate: |z| = |δ / (σ·√T_left)| > MIN_Z_SCORE (conviction filter)
-- Computes fair value via window-delta binary model
-- Edge gate: net_edge > MIN_EDGE_NET after fees (the real market-efficiency filter —
-  when market makers have already repriced to fair, ask≈fair and edge<0; when they
-  haven't yet repriced, ask is below fair and edge is positive)
+- Scans the last ENTRY_SECONDS_BEFORE_CLOSE seconds (default: 60s)
+- Z-score gate: |z| = |δ / (σ_eff·√T_left)| > MIN_Z_SCORE (default 1.5 ≈ 93%)
+- σ_eff = max(rolling_30s_std, |δ|/√elapsed, spike_floor) — prevents GARCH lag
+  from inflating z during sharp moves. Physics: σ_implied from window move itself.
+- Computes fair value via window-delta binary model (GBM / N(d₂))
+- Edge gate: net_edge > MIN_EDGE_NET after fees
 - Sizes via Quarter-Kelly, hard-capped at kelly_max_pct of bankroll
 - Queues FOK market buy order to OMS; single shot per window (last_fired_window guard)
 
-The entry window (ENTRY_SECONDS_BEFORE_CLOSE) defaults to 295s (full window). The
-edge gate is the real filter: at T-15s when ask=0.99, max possible net_edge≈0.009 <
-MIN_EDGE_NET → never fires. At T-200s when move just started and ask=0.82, net_edge
-≈0.14 → fires. Restricting to the last 15s sends us into the already-repriced window.
+The entry window defaults to 60s: early enough that the book may not have fully
+repriced, late enough that BTC direction is more committed (less time to reverse).
+The edge gate provides the secondary filter — at T-10s ask=0.99 → net_edge<0 → skip.
 """
 import asyncio
 import logging
@@ -31,22 +30,17 @@ from polymarket.calibrator import LIVE_PARAMS
 log = logging.getLogger(__name__)
 
 # Env-var defaults for initial startup (overridden by LIVE_PARAMS at runtime)
-_ENTRY_WINDOW_SECONDS_DEFAULT = float(os.getenv("ENTRY_SECONDS_BEFORE_CLOSE", "295"))  # full 5-min window; edge gate blocks repriced entries
-_MIN_DELTA_DEFAULT = float(os.getenv("MIN_DELTA_THRESHOLD", "0.0003"))  # 0.03% — typical BTC 5-min move is 0.02-0.05%; 0.10% was too high and blocked all normal-vol signals
-_MIN_EDGE_NET_DEFAULT = float(os.getenv("MIN_EDGE_NET", "0.02"))  # 2¢ net after fees. Realistic taker edge in the oracle-lag window is 1-3.5¢; 5¢+ blocked every trade (market never misprices a liquid binary by 5¢+fee). Keeps a small +EV margin above breakeven.
-# Minimum order size in USD. Paper trading: any amount > 0 works — 0.50 allows
-# a $15 bankroll at 5% Kelly ($0.75) to fire. Live CLOB enforces its own minimum
-# (~$1 for FOK market orders) separately in the OMS exchange-minimum check.
+# 60s: late enough that BTC direction is committed, early enough the book may not
+# have fully repriced the move (Chainlink oracle lag ~10s; MM repricing lag ~30s).
+_ENTRY_WINDOW_SECONDS_DEFAULT = float(os.getenv("ENTRY_SECONDS_BEFORE_CLOSE", "60"))
+_MIN_DELTA_DEFAULT = float(os.getenv("MIN_DELTA_THRESHOLD", "0.0003"))  # 0.03% — typical BTC 5-min move is 0.02-0.05%
+_MIN_EDGE_NET_DEFAULT = float(os.getenv("MIN_EDGE_NET", "0.02"))  # 2¢ net after fees
 MIN_ORDER_SIZE_USD = float(os.getenv("MIN_ORDER_SIZE_USD", "0.50"))
-# Kelly hard cap as % of bankroll per trade.
-# 5% gives ~$1.10/order at €20/$22 bankroll (clears Polymarket's ~$1 exchange minimum).
-# At $333+ bankroll 5% produces $16+/trade — tighten to 1.5% (KELLY_MAX_PCT=0.015) then.
-KELLY_MAX_PCT = float(os.getenv("KELLY_MAX_PCT", "0.15"))  # 15% at micro-bankroll clears $1 CLOB minimum; tighten to ~0.03 once bankroll > $100
-# Conviction gate: minimum |z| where z = δ / (σ·√T_left). This is the argument to
-# the fair-value normal CDF, so it scales conviction with volatility — a 0.03% move
-# is decisive when calm (high z) but noise when wild (low z). A raw-δ gate can't tell
-# them apart. z=0.674 ≈ fair 0.75; z=1.04 ≈ fair 0.85. Env- and dashboard-tunable.
-_MIN_Z_SCORE_DEFAULT = float(os.getenv("MIN_Z_SCORE", "0.674"))
+KELLY_MAX_PCT = float(os.getenv("KELLY_MAX_PCT", "0.15"))  # 15% at micro-bankroll; tighten to ~0.03 once bankroll > $100
+# 1.5 ≈ N(1.5) = 93.3% model confidence before firing.
+# Previous default 0.674 (75%) allowed firing when only 3 out of 4 windows would win —
+# not enough margin over taker fees. 1.5 requires decisive BTC moves, not coin-flips.
+_MIN_Z_SCORE_DEFAULT = float(os.getenv("MIN_Z_SCORE", "1.5"))
 SCAN_INTERVAL = 2.0  # seconds between signal evaluations
 
 
@@ -100,15 +94,23 @@ async def signal_loop(
 
         delta = oracle.window_delta()
 
-        # Conviction gate on z = δ / (σ·√T_left) — scales the required move with
-        # volatility instead of a vol-blind absolute δ threshold. σ is floored in
-        # the estimator, so z can't blow up on a momentarily flat tape.
-        sigma = oracle.vol_estimator.sigma_per_second()
+        # Effective sigma for z-score: max of three estimates.
+        # (1) Rolling 30s realized vol — backward-looking, lags vol spikes by ~30s
+        # (2) Implied sigma from the window move itself — if BTC moved δ in T_elapsed
+        #     seconds, per-second vol ≥ |δ|/√T_elapsed (physics: realized dispersion).
+        #     This prevents GARCH lag from inflating z after a sharp move: the window
+        #     move itself tells us uncertainty is high.
+        # (3) MIN_SIGMA_PER_SEC floor — prevents z explosion on a perfectly flat tape.
+        sigma_rolling = oracle.vol_estimator.sigma_per_second()
+        secs_elapsed = max(300.0 - secs_left, 5.0)  # time since window open
+        sigma_implied = abs(delta) / math.sqrt(secs_elapsed) if delta != 0 else 0.0
+        sigma = max(sigma_rolling, sigma_implied)
         denom = sigma * math.sqrt(max(secs_left, 0.01))
         z_score = delta / denom if denom > 0 else 0.0
 
         log.info(
             f"[A] IN WINDOW T-{secs_left:.0f}s: δ={delta:.4%} z={z_score:+.2f} "
+            f"σ_roll={sigma_rolling:.5f} σ_impl={sigma_implied:.5f} σ_eff={sigma:.5f} "
             f"(need |z|≥{MIN_Z_SCORE:.2f}) yes_ask={market.yes_ask:.3f} no_ask={market.no_ask:.3f} "
             f"book_age={time.time() - market.last_book_update_ts:.0f}s "
             f"btc={oracle.btc_price:.2f}"

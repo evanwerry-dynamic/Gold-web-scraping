@@ -87,12 +87,13 @@ async def run() -> None:
     # latency buffers superseded by the full-window + edge-gate architecture.
     _OLD_BAD_DEFAULTS = {
         "min_edge_net": {0.07, 0.09},
-        "entry_seconds_before_close": {12.0, 15.0},
+        "entry_seconds_before_close": {12.0, 15.0, 295.0},  # 295s too wide — BTC reverses in 3+ min
         "min_order_size_usd": {0.0},
         "min_delta_threshold": {0.001},   # 0.10% was too high — blocked all normal-vol signals
         "kelly_max_pct": {0.03, 0.05},    # too small at micro-bankroll — gave $0.29-$0.49, below $1 CLOB minimum
         "maker_quote_pct": {0.05, 0.06},  # same — $0.49-$0.58 at $10 bankroll, always dormant
         "maker_fair_band": {0.15},        # too wide — allowed quoting in directional markets (adverse selection)
+        "min_z_score": {0.674},           # too low — 75% model confidence not enough to overcome taker fees + model error
     }
     try:
         from polymarket.data import load_state

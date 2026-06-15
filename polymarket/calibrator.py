@@ -28,7 +28,7 @@ MIN_TRADES_FOR_CALIBRATION = 20
 LIVE_PARAMS: dict = {
     "min_delta_threshold": float(os.getenv("MIN_DELTA_THRESHOLD", "0.0003")),
     "min_edge_net": float(os.getenv("MIN_EDGE_NET", "0.02")),
-    "entry_seconds_before_close": float(os.getenv("ENTRY_SECONDS_BEFORE_CLOSE", "295")),
+    "entry_seconds_before_close": float(os.getenv("ENTRY_SECONDS_BEFORE_CLOSE", "60")),
     "min_order_size_usd": float(os.getenv("MIN_ORDER_SIZE_USD", "1.0")),
     "kelly_max_pct": float(os.getenv("KELLY_MAX_PCT", "0.15")),   # 15% — clears $1 CLOB minimum at micro-bankroll; tighten to 0.03-0.05 once bankroll > $100
     "maker_quote_pct": float(os.getenv("MAKER_QUOTE_PCT", "0.15")),  # 15% per side — same logic; 6% at $10 = $0.60, too small for exchange minimum
@@ -36,7 +36,7 @@ LIVE_PARAMS: dict = {
     "maker_inventory_skew": float(os.getenv("MAKER_INVENTORY_SKEW", "0.06")),
     "maker_max_sigma": float(os.getenv("MAKER_MAX_SIGMA", "0.00015")),
     "maker_fair_band": float(os.getenv("MAKER_FAIR_BAND", "0.05")),
-    "min_z_score": float(os.getenv("MIN_Z_SCORE", "0.674")),
+    "min_z_score": float(os.getenv("MIN_Z_SCORE", "1.5")),
 }
 
 # H5: valid ranges for calibrator parameters (Claude may only adjust these three)

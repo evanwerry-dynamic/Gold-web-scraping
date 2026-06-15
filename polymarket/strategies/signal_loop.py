@@ -13,6 +13,7 @@ This is the primary strategy — documented equivalent of the $313→$438k bot a
 """
 import asyncio
 import logging
+import math
 import os
 import time
 
@@ -36,6 +37,11 @@ MIN_ORDER_SIZE_USD = float(os.getenv("MIN_ORDER_SIZE_USD", "0.50"))
 # 5% gives ~$1.10/order at €20/$22 bankroll (clears Polymarket's ~$1 exchange minimum).
 # At $333+ bankroll 5% produces $16+/trade — tighten to 1.5% (KELLY_MAX_PCT=0.015) then.
 KELLY_MAX_PCT = float(os.getenv("KELLY_MAX_PCT", "0.05"))
+# Conviction gate: minimum |z| where z = δ / (σ·√T_left). This is the argument to
+# the fair-value normal CDF, so it scales conviction with volatility — a 0.03% move
+# is decisive when calm (high z) but noise when wild (low z). A raw-δ gate can't tell
+# them apart. z=0.674 ≈ fair 0.75; z=1.04 ≈ fair 0.85. Env- and dashboard-tunable.
+_MIN_Z_SCORE_DEFAULT = float(os.getenv("MIN_Z_SCORE", "0.674"))
 SCAN_INTERVAL = 2.0  # seconds between signal evaluations
 
 
@@ -59,6 +65,7 @@ async def signal_loop(
 
         # H3: read live parameters each iteration (calibrator + dashboard Tuning tab)
         MIN_DELTA = LIVE_PARAMS.get("min_delta_threshold", _MIN_DELTA_DEFAULT)
+        MIN_Z_SCORE = LIVE_PARAMS.get("min_z_score", _MIN_Z_SCORE_DEFAULT)
         MIN_EDGE_NET = LIVE_PARAMS.get("min_edge_net", _MIN_EDGE_NET_DEFAULT)
         ENTRY_WINDOW_SECONDS = LIVE_PARAMS.get("entry_seconds_before_close", _ENTRY_WINDOW_SECONDS_DEFAULT)
         min_order_size = LIVE_PARAMS.get("min_order_size_usd", MIN_ORDER_SIZE_USD)
@@ -88,16 +95,24 @@ async def signal_loop(
 
         delta = oracle.window_delta()
 
+        # Conviction gate on z = δ / (σ·√T_left) — scales the required move with
+        # volatility instead of a vol-blind absolute δ threshold. σ is floored in
+        # the estimator, so z can't blow up on a momentarily flat tape.
+        sigma = oracle.vol_estimator.sigma_per_second()
+        denom = sigma * math.sqrt(max(secs_left, 0.01))
+        z_score = delta / denom if denom > 0 else 0.0
+
         log.info(
-            f"[A] IN WINDOW T-{secs_left:.0f}s: δ={delta:.4%} "
-            f"(need {MIN_DELTA:.4%}) yes_ask={market.yes_ask:.3f} no_ask={market.no_ask:.3f} "
+            f"[A] IN WINDOW T-{secs_left:.0f}s: δ={delta:.4%} z={z_score:+.2f} "
+            f"(need |z|≥{MIN_Z_SCORE:.2f}) yes_ask={market.yes_ask:.3f} no_ask={market.no_ask:.3f} "
             f"book_age={time.time() - market.last_book_update_ts:.0f}s "
             f"btc={oracle.btc_price:.2f}"
         )
 
-        if abs(delta) < MIN_DELTA:
+        if abs(z_score) < MIN_Z_SCORE:
             log.info(
-                f"[A] T-{secs_left:.0f}s: δ={delta:.4%} below threshold {MIN_DELTA:.4%} — skip"
+                f"[A] T-{secs_left:.0f}s: |z|={abs(z_score):.2f} below conviction "
+                f"threshold {MIN_Z_SCORE:.2f} (δ={delta:.4%}, σ={sigma:.5f}) — skip"
             )
             continue
 
@@ -118,7 +133,6 @@ async def signal_loop(
 
         oracle.strategy_phase = "FAIR"
         direction = "UP" if delta > 0 else "DOWN"
-        sigma = oracle.vol_estimator.sigma_per_second()
 
         open_price = market.window_open_price or oracle.btc_price
         fair = fair_value_binary(

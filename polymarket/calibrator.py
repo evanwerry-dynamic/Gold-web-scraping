@@ -34,6 +34,9 @@ LIVE_PARAMS: dict = {
     "maker_quote_pct": float(os.getenv("MAKER_QUOTE_PCT", "0.06")),
     "maker_half_spread": float(os.getenv("MAKER_HALF_SPREAD", "0.015")),
     "maker_inventory_skew": float(os.getenv("MAKER_INVENTORY_SKEW", "0.06")),
+    "maker_max_sigma": float(os.getenv("MAKER_MAX_SIGMA", "0.00015")),
+    "maker_fair_band": float(os.getenv("MAKER_FAIR_BAND", "0.15")),
+    "min_z_score": float(os.getenv("MIN_Z_SCORE", "0.674")),
 }
 
 # H5: valid ranges for calibrator parameters (Claude may only adjust these three)
@@ -51,6 +54,9 @@ TUNABLE_RANGES = {
     "maker_quote_pct": (0.01, 0.25),
     "maker_half_spread": (0.005, 0.10),
     "maker_inventory_skew": (0.0, 0.20),
+    "maker_max_sigma": (0.00002, 0.0010),
+    "maker_fair_band": (0.05, 0.50),
+    "min_z_score": (0.0, 3.0),
 }
 
 

@@ -34,6 +34,7 @@ Adverse-selection controls (in priority order):
 import asyncio
 import logging
 import math
+import os
 import time
 
 from polymarket.fair_value import fair_value_binary
@@ -43,11 +44,18 @@ from polymarket.risk import RiskManager
 log = logging.getLogger(__name__)
 
 REQUOTE_INTERVAL = 5.0       # seconds between quote refreshes
-INFORMED_WINDOW_SECS = 60    # pull ALL quotes this many seconds before close
+INFORMED_WINDOW_SECS = 90    # pull ALL quotes this many seconds before close (tightened from 60)
 IMBALANCE_THRESHOLD = 0.70   # pull ALL quotes if bid_qty / total > this
 QUOTE_PCT = 0.05             # each quote side = % of bankroll
 MIN_VIABLE_QUOTE = 1.0       # skip quoting below this $ (exchange min order)
 TICK = 0.01
+
+# Regime gate — only market-make in CALM, balanced windows. Two-sided binary MM
+# is structurally adverse-selected in a trending move (the winning side runs away,
+# the loser fills on you). It only nets out when the window is a genuine coin-flip,
+# so quote ONLY when realized vol is low AND fair value sits near 0.50. Both tunable.
+MAKER_MAX_SIGMA = float(os.getenv("MAKER_MAX_SIGMA", "0.00015"))  # per-second realized-vol ceiling
+MAKER_FAIR_BAND = float(os.getenv("MAKER_FAIR_BAND", "0.15"))     # quote only when |fair − 0.5| ≤ this
 
 # Pricing model constants (tunable via LIVE_PARAMS / dashboard Tuning tab)
 HALF_SPREAD_BASE = 0.015     # 1.5¢ minimum half-spread (3¢ round-trip) before vol
@@ -220,6 +228,16 @@ async def maker_loop(
         min_viable = LIVE_PARAMS.get("min_order_size_usd", MIN_VIABLE_QUOTE)
         half_spread_base = LIVE_PARAMS.get("maker_half_spread", HALF_SPREAD_BASE)
         skew_coef = LIVE_PARAMS.get("maker_inventory_skew", INVENTORY_SKEW_COEF)
+        max_sigma = LIVE_PARAMS.get("maker_max_sigma", MAKER_MAX_SIGMA)
+        fair_band = LIVE_PARAMS.get("maker_fair_band", MAKER_FAIR_BAND)
+
+        # Regime gate 1 (calm vol): a trending window adverse-selects two-sided MM
+        # — the winning side runs away while the loser fills on us. Only quote when
+        # realized vol is low enough that the window is genuinely a coin-flip.
+        sigma = oracle.vol_estimator.sigma_per_second()
+        if sigma > max_sigma:
+            await _pull(f"vol {sigma:.5f} > {max_sigma:.5f} (trending — adverse selection)")
+            continue
 
         quote_size = oracle.bankroll * quote_pct
         if quote_size < min_viable:
@@ -235,16 +253,23 @@ async def maker_loop(
         fair = fair_value_binary(
             current_price=oracle.btc_price,
             window_open_price=open_price,
-            sigma_per_second=oracle.vol_estimator.sigma_per_second(),
+            sigma_per_second=sigma,
             seconds_remaining=secs_left,
         )
+
+        # Regime gate 2 (balanced book): once fair drifts away from 0.50 the window
+        # has a direction — the side we'd accumulate is the one informed flow is
+        # dumping. Only make markets while the outcome is still near a coin-flip.
+        if abs(fair - 0.5) > fair_band:
+            await _pull(f"fair {fair:.2f} outside calm band 0.5±{fair_band:.2f} (directional)")
+            continue
 
         result = compute_maker_quotes(
             fair=fair,
             yes_bid=market.yes_bid,
             yes_ask=market.yes_ask,
             no_ask=market.no_ask,
-            sigma_per_second=oracle.vol_estimator.sigma_per_second(),
+            sigma_per_second=sigma,
             secs_left=secs_left,
             bankroll=oracle.bankroll,
             inventory_up_value=_inventory_up_value(oracle, market.market_id),

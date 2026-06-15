@@ -43,11 +43,20 @@ def fair_value_binary(
 
 def dynamic_taker_fee(market_price: float) -> float:
     """
-    Polymarket CLOB V2 dynamic taker fee formula.
-    Peaks at 3.6% when market_price = 0.50, approaches 0% near 0 or 1.
-    fee_rate = 0.036 × (1 - |2p - 1|)
+    Polymarket per-category dynamic taker fee (crypto schedule, effective Mar 2026).
+
+    The real fee follows a parabolic p·(1-p) curve, peaking at 1.80% when
+    market_price = 0.50 and tapering to ~0% near 0 or 1. Verified against
+    Polymarket's published fee schedule (crypto = 1.80% peak effective rate).
+
+        fee_rate = 0.072 × p × (1 - p)      # 0.072 = 4 × 0.018, so peak = 0.018
+
+    NOTE: This is half the previous 0.036×(1-|2p-1|) approximation, which both
+    over-charged the bankroll ledger and starved the edge gate of valid trades.
+    Makers (Strategy B POST_ONLY) pay 0 taker fee and earn rebates — this fee
+    applies only to Strategy A's FOK taker orders.
     """
-    return 0.036 * (1.0 - abs(2.0 * market_price - 1.0))
+    return 0.072 * market_price * (1.0 - market_price)
 
 
 def should_trade(

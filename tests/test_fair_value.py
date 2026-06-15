@@ -72,8 +72,9 @@ class TestDynamicTakerFee:
         for p in [0.01, 0.25, 0.50, 0.75, 0.99]:
             assert dynamic_taker_fee(p) >= 0
 
-    def test_fee_at_fifty_cents_is_3_6_pct(self):
-        assert abs(dynamic_taker_fee(0.50) - 0.036) < 1e-9
+    def test_fee_at_fifty_cents_is_1_8_pct(self):
+        # Crypto category peak effective taker fee = 1.80% at p=0.50
+        assert abs(dynamic_taker_fee(0.50) - 0.018) < 1e-9
 
     def test_fee_is_symmetric(self):
         assert abs(dynamic_taker_fee(0.30) - dynamic_taker_fee(0.70)) < 1e-9
@@ -83,13 +84,18 @@ class TestDynamicTakerFee:
 
 
 class TestShouldTrade:
-    def test_entry_price_below_floor_blocked(self):
-        tradeable, _ = should_trade(0.95, 0.65)
-        assert not tradeable
+    def test_no_entry_price_floor_net_edge_decides(self):
+        # The old min_entry_price=0.70 gate was removed — net edge is the sole filter.
+        # fair=0.95, ask=0.65: gross=0.30, fee=0.072×0.65×0.35≈0.0164, net≈0.284 → trades
+        tradeable, net_edge = should_trade(0.95, 0.65)
+        assert tradeable
+        assert net_edge > 0.05
 
-    def test_entry_at_floor_blocked(self):
-        tradeable, _ = should_trade(0.95, 0.70)
-        assert not tradeable
+    def test_low_ask_with_sufficient_edge_trades(self):
+        # fair=0.95, ask=0.70: gross=0.25, fee=0.072×0.70×0.30≈0.0151, net≈0.235 → trades
+        tradeable, net_edge = should_trade(0.95, 0.70)
+        assert tradeable
+        assert net_edge > 0.05
 
     def test_sufficient_edge_above_floor_trades(self):
         tradeable, net_edge = should_trade(0.95, 0.85, min_edge_net=0.05)
@@ -97,7 +103,7 @@ class TestShouldTrade:
         assert net_edge > 0.05
 
     def test_insufficient_net_edge_blocked(self):
-        # fair=0.90, ask=0.85, fee≈0.0108 → net≈0.039 < 0.05
+        # fair=0.90, ask=0.85, fee≈0.0092 → net≈0.041 < 0.05
         tradeable, net_edge = should_trade(0.90, 0.85, min_edge_net=0.05)
         assert not tradeable
 

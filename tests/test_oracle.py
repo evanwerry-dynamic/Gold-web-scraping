@@ -22,11 +22,15 @@ class TestBinanceVolEstimator:
             est.update(base + i * 0.05)
         assert est.sigma_per_second() > 0
 
-    def test_flat_price_gives_near_zero_vol(self):
+    def test_flat_price_floored_to_min_sigma(self):
+        # Flat tape has raw std 0, but sigma_per_second() floors it to
+        # MIN_SIGMA_PER_SEC so fair value can't become 100% certain on a
+        # momentarily quiet market (overconfidence guard).
+        from polymarket.oracle_buffer import MIN_SIGMA_PER_SEC
         est = BinanceVolEstimator()
         for _ in range(30):
             est.update(100.0)
-        assert est.sigma_per_second() < 1e-9
+        assert est.sigma_per_second() == pytest.approx(MIN_SIGMA_PER_SEC)
 
     def test_rolling_window_evicts_old_data(self):
         est = BinanceVolEstimator(window=5)

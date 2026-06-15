@@ -98,20 +98,20 @@ class TestShouldTrade:
 
     def test_trades_at_0_70_entry_with_sufficient_edge(self):
         # ask=0.70 is no longer blocked by a price gate — net edge decides
-        # fee at 0.70 = 0.036×0.60 = 0.0216; gross=0.20; net=0.178 > 0.05 ✓
+        # fee at 0.70 = 0.072×0.70×0.30 = 0.01512; gross=0.20; net=0.185 > 0.05 ✓
         tradeable, net_edge = should_trade(fair_value=0.90, market_ask=0.70)
         assert tradeable is True
         assert net_edge > 0.05
 
     def test_trades_at_0_50_with_large_edge(self):
-        # ask=0.50, fee=3.6%; fair=0.90 → gross=0.40, net=0.364 > 0.05 ✓
+        # ask=0.50, fee=1.8%; fair=0.90 → gross=0.40, net=0.382 > 0.05 ✓
         tradeable, net_edge = should_trade(fair_value=0.90, market_ask=0.50)
         assert tradeable is True
         assert net_edge > 0.30
 
     def test_blocked_at_0_50_with_small_edge(self):
-        # ask=0.50, fee=3.6%; fair=0.58 → gross=0.08, net=0.044 < 0.05 ✗
-        tradeable, _ = should_trade(fair_value=0.58, market_ask=0.50, min_edge_net=0.05)
+        # ask=0.50, fee=1.8%; fair=0.56 → gross=0.06, net=0.042 < 0.05 ✗
+        tradeable, _ = should_trade(fair_value=0.56, market_ask=0.50, min_edge_net=0.05)
         assert tradeable is False
 
     def test_blocked_insufficient_edge(self):
@@ -142,8 +142,9 @@ class TestShouldTrade:
 class TestDynamicTakerFee:
 
     def test_peaks_at_50_pct(self):
+        # Crypto category peak effective taker fee = 1.80% at p=0.50
         fee_at_50 = dynamic_taker_fee(0.50)
-        assert abs(fee_at_50 - 0.036) < 1e-9
+        assert abs(fee_at_50 - 0.018) < 1e-9
 
     def test_near_zero_at_extremes(self):
         assert dynamic_taker_fee(0.01) < 0.002

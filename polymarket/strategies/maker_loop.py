@@ -44,18 +44,21 @@ from polymarket.risk import RiskManager
 log = logging.getLogger(__name__)
 
 REQUOTE_INTERVAL = 5.0       # seconds between quote refreshes
-INFORMED_WINDOW_SECS = 90    # pull ALL quotes this many seconds before close (tightened from 60)
-IMBALANCE_THRESHOLD = 0.70   # pull ALL quotes if bid_qty / total > this
+INFORMED_WINDOW_SECS = 120   # pull ALL quotes 2 minutes before close — final 2min is pure informed flow on a 5-min binary
+IMBALANCE_THRESHOLD = 0.65   # pull ALL quotes if bid_qty / total > this (tightened from 0.70)
 QUOTE_PCT = 0.15             # 15% per side — clears $1 CLOB minimum at micro-bankroll; tighten to ~0.05 above $100
 MIN_VIABLE_QUOTE = 1.0       # skip quoting below this $ (exchange min order)
 TICK = 0.01
 
 # Regime gate — only market-make in CALM, balanced windows. Two-sided binary MM
 # is structurally adverse-selected in a trending move (the winning side runs away,
-# the loser fills on you). It only nets out when the window is a genuine coin-flip,
-# so quote ONLY when realized vol is low AND fair value sits near 0.50. Both tunable.
+# the loser fills on us). It only nets out when the window is a genuine coin-flip.
+# In A-S terms: only quote when informed-flow fraction π is low (BTC flat, fair≈0.50).
+# MAKER_FAIR_BAND tightened from 0.15 to 0.05: quoting at fair=0.65 means BTC has
+# already moved decisively — every YES fill comes from someone who knows direction.
+# The true coin-flip zone is 0.50±0.05 where uninformed and informed flow are balanced.
 MAKER_MAX_SIGMA = float(os.getenv("MAKER_MAX_SIGMA", "0.00015"))  # per-second realized-vol ceiling
-MAKER_FAIR_BAND = float(os.getenv("MAKER_FAIR_BAND", "0.15"))     # quote only when |fair − 0.5| ≤ this
+MAKER_FAIR_BAND = float(os.getenv("MAKER_FAIR_BAND", "0.05"))     # quote only when |fair − 0.5| ≤ this
 
 # Pricing model constants (tunable via LIVE_PARAMS / dashboard Tuning tab)
 HALF_SPREAD_BASE = 0.015     # 1.5¢ minimum half-spread (3¢ round-trip) before vol
@@ -114,8 +117,15 @@ def compute_maker_quotes(
     # Inventory skew: shift the reservation price toward reducing net exposure.
     # Long UP (positive) -> lower fair_eff -> cheaper YES bid (buy less YES),
     # higher NO bid (buy more NO). Always pushes inventory toward flat.
+    #
+    # GLFT terminal condition: urgency multiplier grows as close approaches so
+    # inventory is shed more aggressively in the final minutes. Without this,
+    # A-S provides no incentive to unwind near T=0 until quotes are pulled
+    # entirely, leaving the maker holding involuntary directional exposure.
+    # urgency=1.0 at T=180s, grows to 3.0 at T=60s, 18× at the pull window edge.
+    urgency = max(1.0, 180.0 / max(secs_left, 10.0))
     skew_norm = max(-1.0, min(1.0, inventory_up_value / max(bankroll, 1.0)))
-    skew = inventory_skew_coef * skew_norm
+    skew = inventory_skew_coef * skew_norm * urgency
     fair_eff = max(0.02, min(0.98, fair - skew))
 
     # YES side: buy YES at reservation − half_spread. Capture is measured vs the

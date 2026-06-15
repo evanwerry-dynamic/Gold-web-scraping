@@ -92,6 +92,7 @@ async def run() -> None:
         "min_delta_threshold": {0.001},   # 0.10% was too high — blocked all normal-vol signals
         "kelly_max_pct": {0.03, 0.05},    # too small at micro-bankroll — gave $0.29-$0.49, below $1 CLOB minimum
         "maker_quote_pct": {0.05, 0.06},  # same — $0.49-$0.58 at $10 bankroll, always dormant
+        "maker_fair_band": {0.15},        # too wide — allowed quoting in directional markets (adverse selection)
     }
     try:
         from polymarket.data import load_state

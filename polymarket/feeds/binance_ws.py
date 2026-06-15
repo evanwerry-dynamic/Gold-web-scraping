@@ -76,7 +76,15 @@ async def binance_ws_loop(oracle: OracleBuffer) -> None:
                             continue
                         price = float(k["c"])
                         oracle.btc_price = price
-                        oracle.vol_estimator.update(price)
+                        # Vol estimator must see ONE return per finalized 1s candle.
+                        # The @kline_1s stream pushes the in-progress candle many
+                        # times per second; feeding every tick samples sub-second
+                        # returns → std systematically UNDER-estimates per-second
+                        # vol → overconfident fair value → false edge. Only update
+                        # on candle close (k["x"]==True). Kraken/CoinGecko paths are
+                        # already throttled to 1s for the same reason.
+                        if k.get("x"):
+                            oracle.vol_estimator.update(price)
                         now_ts = time.time()
                         oracle.record_price(price, now_ts)
                         oracle.last_binance_ts = now_ts  # Binance-specific health

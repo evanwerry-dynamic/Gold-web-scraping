@@ -1,9 +1,16 @@
 """Shared in-memory state written by WebSocket feeds, read by strategy loops."""
 import asyncio
+import os
 import time
 from dataclasses import dataclass, field
 from collections import deque
 import numpy as np
+
+# Minimum per-second realized vol. In a dead-calm second-by-second stretch the
+# 30-sample std can collapse toward zero, which makes z = delta/(σ√T) explode
+# and drives fair value to 1.0/0.0 on pure noise — the bot then "sees" huge edge
+# and takes losing trades. Floor σ so confidence can never run away. Tunable.
+MIN_SIGMA_PER_SEC = float(os.getenv("MIN_SIGMA_PER_SEC", "0.00008"))
 
 
 class BinanceVolEstimator:
@@ -20,10 +27,15 @@ class BinanceVolEstimator:
             self._last_price = price
 
     def sigma_per_second(self) -> float:
-        """Return per-second realized vol. Falls back to 0.0002 if insufficient data."""
+        """Return per-second realized vol, floored to prevent overconfidence.
+
+        Falls back to 0.0002 if insufficient data; otherwise the sample std,
+        clamped up to MIN_SIGMA_PER_SEC so a momentarily flat tape can't make
+        the fair-value model certain.
+        """
         if len(self._returns) < 5:
             return 0.0002
-        return float(np.std(self._returns))
+        return max(float(np.std(self._returns)), MIN_SIGMA_PER_SEC)
 
     def is_ready(self) -> bool:
         """True once we have enough samples for a meaningful vol estimate.

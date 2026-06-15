@@ -163,8 +163,9 @@ async def run() -> None:
 
     # Use INITIAL_BANKROLL env var as the authoritative starting point for total-loss calc.
     _initial = float(os.getenv("INITIAL_BANKROLL", str(oracle.bankroll)))
-    _drawdown_limit = float(os.getenv("DRAWDOWN_LIMIT", "0.40"))  # 40% default — 25% trips too fast at micro-bankroll (single B loss = halt)
-    risk_mgr = RiskManager(bankroll=_initial, drawdown_limit=_drawdown_limit)
+    _drawdown_limit = float(os.getenv("DRAWDOWN_LIMIT", "0.40"))
+    _daily_loss_limit = float(os.getenv("DAILY_LOSS_LIMIT", "0.20"))  # 20% — 5% = $0.48 at $9.70 bankroll; one trade loss trips it
+    risk_mgr = RiskManager(bankroll=_initial, drawdown_limit=_drawdown_limit, daily_loss_limit=_daily_loss_limit)
     # Peak resets to current bankroll each startup — the peak drawdown guard protects
     # THIS SESSION, not all-time. The 40% total_loss_limit (from _initial) is the
     # all-time floor. Setting peak=initial was a deadlock: after any drawdown, every

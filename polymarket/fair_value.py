@@ -54,21 +54,18 @@ def should_trade(
     fair_value: float,
     market_ask: float,
     min_edge_net: float = 0.05,
-    min_entry_price: float = 0.70,
 ) -> tuple[bool, float]:
     """
     Decide whether to take a position.
 
-    Rules:
-    1. Entry price must be > 0.70 (at $0.50 entry the fee is ~3.15% — kills edge).
-    2. Net edge (fair_value - market_ask - fee) must exceed min_edge_net.
+    Net edge (fair_value - market_ask - fee) must exceed min_edge_net.
+    The fee already rises at mid-prices (peaks at 3.6% at 0.50), so requiring
+    a positive net edge after fee is the correct and sufficient filter — no
+    separate min_entry_price gate needed.
 
     Returns:
         (tradeable, net_edge)
     """
-    if market_ask <= min_entry_price:
-        return False, 0.0
-
     gross_edge = fair_value - market_ask
     fee = dynamic_taker_fee(market_ask)
     net_edge = gross_edge - fee

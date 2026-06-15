@@ -96,14 +96,22 @@ class TestShouldTrade:
         assert tradeable is True
         assert net_edge > 0.05
 
-    def test_blocked_below_min_entry_price(self):
-        # market_ask at 0.70 is the boundary — must be strictly above
+    def test_trades_at_0_70_entry_with_sufficient_edge(self):
+        # ask=0.70 is no longer blocked by a price gate — net edge decides
+        # fee at 0.70 = 0.036×0.60 = 0.0216; gross=0.20; net=0.178 > 0.05 ✓
         tradeable, net_edge = should_trade(fair_value=0.90, market_ask=0.70)
-        assert tradeable is False
-        assert net_edge == 0.0
+        assert tradeable is True
+        assert net_edge > 0.05
 
-    def test_blocked_at_0_50_entry(self):
-        tradeable, _ = should_trade(fair_value=0.90, market_ask=0.50)
+    def test_trades_at_0_50_with_large_edge(self):
+        # ask=0.50, fee=3.6%; fair=0.90 → gross=0.40, net=0.364 > 0.05 ✓
+        tradeable, net_edge = should_trade(fair_value=0.90, market_ask=0.50)
+        assert tradeable is True
+        assert net_edge > 0.30
+
+    def test_blocked_at_0_50_with_small_edge(self):
+        # ask=0.50, fee=3.6%; fair=0.58 → gross=0.08, net=0.044 < 0.05 ✗
+        tradeable, _ = should_trade(fair_value=0.58, market_ask=0.50, min_edge_net=0.05)
         assert tradeable is False
 
     def test_blocked_insufficient_edge(self):

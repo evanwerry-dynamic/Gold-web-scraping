@@ -87,6 +87,14 @@ async def signal_loop(
             continue
 
         delta = oracle.window_delta()
+
+        log.info(
+            f"[A] IN WINDOW T-{secs_left:.0f}s: δ={delta:.4%} "
+            f"(need {MIN_DELTA:.4%}) yes_ask={market.yes_ask:.3f} no_ask={market.no_ask:.3f} "
+            f"book_age={time.time() - market.last_book_update_ts:.0f}s "
+            f"btc={oracle.btc_price:.2f}"
+        )
+
         if abs(delta) < MIN_DELTA:
             log.info(
                 f"[A] T-{secs_left:.0f}s: δ={delta:.4%} below threshold {MIN_DELTA:.4%} — skip"
@@ -130,9 +138,12 @@ async def signal_loop(
         tradeable, net_edge = should_trade(fair_direction, ask, MIN_EDGE_NET)
 
         if not tradeable:
+            from polymarket.fair_value import dynamic_taker_fee
+            fee = dynamic_taker_fee(ask)
             log.info(
-                f"[A] Edge too low: δ={delta:.4%} fair_{direction}={fair_direction:.3f} "
-                f"ask={ask:.3f} net_edge={net_edge:.4f} < {MIN_EDGE_NET:.2f} — skip"
+                f"[A] Insufficient edge: δ={delta:.4%} dir={direction} "
+                f"fair={fair_direction:.3f} ask={ask:.3f} "
+                f"fee={fee:.4f} net_edge={net_edge:.4f} need>{MIN_EDGE_NET:.3f} — skip"
             )
             continue
 

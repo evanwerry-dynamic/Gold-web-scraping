@@ -15,8 +15,15 @@ const LEVERS: {
     key: "min_edge_net",
     label: "Min Net Edge",
     unit: "$ per share",
-    effect: "Higher = fewer, higher-conviction trades. The main win-rate lever. 0.07 = 7¢ edge required after fees.",
+    effect: "Higher = fewer, higher-conviction trades. The main win-rate lever. 0.07 = 7¢ edge required after fees. Below 0.02 erodes the safety margin against model error — keep ≥0.02 until the model is proven.",
     fmt: (v) => `${(v * 100).toFixed(1)}¢`,
+  },
+  {
+    key: "min_z_score",
+    label: "Conviction (z-score)",
+    unit: "min |z| = δ / (σ·√T)",
+    effect: "Strategy A conviction gate — scales the required move with volatility. 0.674≈fair 0.75, 1.04≈fair 0.85, 0=disabled. Lower this to let more Strategy A signals through; raise to demand more decisive moves.",
+    fmt: (v) => v.toFixed(2),
   },
   {
     key: "min_delta_threshold",
@@ -52,6 +59,34 @@ const LEVERS: {
     unit: "fraction of bankroll per side",
     effect: "Strategy B quote size per side. 0.06 = 6% (~$1.14 at $19). Each side must clear Min Order Size or Strategy B goes dormant.",
     fmt: (v) => `${(v * 100).toFixed(1)}%`,
+  },
+  {
+    key: "maker_half_spread",
+    label: "Maker Half-Spread",
+    unit: "$ per share each side",
+    effect: "Strategy B quote distance from the reservation price. Wider = safer fills but fewer trades; tighter = more fills but more adverse selection.",
+    fmt: (v) => `${(v * 100).toFixed(1)}¢`,
+  },
+  {
+    key: "maker_inventory_skew",
+    label: "Maker Inventory Skew",
+    unit: "fraction",
+    effect: "How aggressively Strategy B shades quotes to offload inventory. Higher = faster mean-reversion to flat, lower = holds inventory longer.",
+    fmt: (v) => v.toFixed(3),
+  },
+  {
+    key: "maker_max_sigma",
+    label: "Maker Max Vol",
+    unit: "σ per second",
+    effect: "Strategy B pulls all quotes when realized vol exceeds this (trending market → adverse selection). Higher = quote through choppier tape; lower = only quote in calm markets.",
+    fmt: (v) => v.toFixed(5),
+  },
+  {
+    key: "maker_fair_band",
+    label: "Maker Fair Band",
+    unit: "± around 0.50",
+    effect: "Strategy B only quotes when fair value sits within 0.5±band (near coin-flip). Higher = quote in more directional markets; lower = only quote true 50/50 markets.",
+    fmt: (v) => `±${v.toFixed(2)}`,
   },
 ];
 

@@ -42,7 +42,7 @@ LIVE_PARAMS: dict = {
 # H5: valid ranges for calibrator parameters (Claude may only adjust these three)
 PARAM_RANGES = {
     "min_delta_threshold": (0.0001, 0.005),
-    "min_edge_net": (0.02, 0.15),
+    "min_edge_net": (0.01, 0.15),
     "entry_seconds_before_close": (5.0, 295.0),
 }
 

@@ -364,6 +364,11 @@ async def _track_until_terminal(
                     "dollar_size": dollar_size,
                     "taker_fee": round(taker_fee, 4),
                     "paper": False,
+                    # Diagnostic fields — enable post-hoc analysis of entry timing/conviction
+                    "secs_before_close": intent.get("secs_before_close"),
+                    "z_score": intent.get("z_score"),
+                    "delta": intent.get("delta"),
+                    "window_open_price": intent.get("window_open_price"),
                 }
                 await loop.run_in_executor(None, append_trade, live_record)
                 log.info(

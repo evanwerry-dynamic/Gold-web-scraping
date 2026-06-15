@@ -1,15 +1,20 @@
 """
-Strategy A: Late-window momentum signal loop.
+Strategy A: Opportunistic momentum signal loop.
 
 Entry logic:
-- Only fires in the final ENTRY_WINDOW_SECONDS before window close
-- Requires |window_delta| > MIN_DELTA_THRESHOLD (0.10%)
+- Scans the entire 5-minute window (not just the final N seconds)
+- Z-score gate: |z| = |δ / (σ·√T_left)| > MIN_Z_SCORE (conviction filter)
 - Computes fair value via window-delta binary model
-- Checks should_trade() for net edge > MIN_EDGE_NET after fees
-- Sizes via Quarter-Kelly, hard-capped at 3% of bankroll
-- Queues FOK market buy order to OMS
+- Edge gate: net_edge > MIN_EDGE_NET after fees (the real market-efficiency filter —
+  when market makers have already repriced to fair, ask≈fair and edge<0; when they
+  haven't yet repriced, ask is below fair and edge is positive)
+- Sizes via Quarter-Kelly, hard-capped at kelly_max_pct of bankroll
+- Queues FOK market buy order to OMS; single shot per window (last_fired_window guard)
 
-This is the primary strategy — documented equivalent of the $313→$438k bot approach.
+The entry window (ENTRY_SECONDS_BEFORE_CLOSE) defaults to 295s (full window). The
+edge gate is the real filter: at T-15s when ask=0.99, max possible net_edge≈0.009 <
+MIN_EDGE_NET → never fires. At T-200s when move just started and ask=0.82, net_edge
+≈0.14 → fires. Restricting to the last 15s sends us into the already-repriced window.
 """
 import asyncio
 import logging
@@ -26,7 +31,7 @@ from polymarket.calibrator import LIVE_PARAMS
 log = logging.getLogger(__name__)
 
 # Env-var defaults for initial startup (overridden by LIVE_PARAMS at runtime)
-_ENTRY_WINDOW_SECONDS_DEFAULT = float(os.getenv("ENTRY_SECONDS_BEFORE_CLOSE", "15"))  # +2s for CLOB latency, +3s buffer
+_ENTRY_WINDOW_SECONDS_DEFAULT = float(os.getenv("ENTRY_SECONDS_BEFORE_CLOSE", "295"))  # full 5-min window; edge gate blocks repriced entries
 _MIN_DELTA_DEFAULT = float(os.getenv("MIN_DELTA_THRESHOLD", "0.0003"))  # 0.03% — typical BTC 5-min move is 0.02-0.05%; 0.10% was too high and blocked all normal-vol signals
 _MIN_EDGE_NET_DEFAULT = float(os.getenv("MIN_EDGE_NET", "0.05"))  # 5¢ net after fees — 7¢ was too tight (blocked valid edge after dynamic fee)
 # Minimum order size in USD. Paper trading: any amount > 0 works — 0.50 allows
@@ -200,6 +205,8 @@ async def signal_loop(
             "fair": fair_direction,
             "edge": net_edge,
             "delta": delta,
+            "z_score": z_score,
+            "secs_before_close": secs_left,
             "order_type": "FOK",
             "queued_at": time.time(),
             "window_open_price": market.window_open_price,

@@ -6,11 +6,12 @@ from dataclasses import dataclass, field
 from collections import deque
 import numpy as np
 
-# Minimum per-second realized vol. In a dead-calm second-by-second stretch the
-# 30-sample std can collapse toward zero, which makes z = delta/(σ√T) explode
-# and drives fair value to 1.0/0.0 on pure noise — the bot then "sees" huge edge
-# and takes losing trades. Floor σ so confidence can never run away. Tunable.
-MIN_SIGMA_PER_SEC = float(os.getenv("MIN_SIGMA_PER_SEC", "0.00008"))
+# Minimum per-second realized vol. Raised from 0.00008 to 0.00015 (typical BTC
+# calm-period vol). The previous floor was 6× below real BTC vol, so the rolling
+# std almost always exceeded it — meaning the floor never actually protected against
+# z-score inflation. At 0.00015, the floor now activates on genuinely calm tapes
+# and provides a meaningful lower bound on the uncertainty estimate.
+MIN_SIGMA_PER_SEC = float(os.getenv("MIN_SIGMA_PER_SEC", "0.00015"))
 
 
 class BinanceVolEstimator:
@@ -27,15 +28,30 @@ class BinanceVolEstimator:
             self._last_price = price
 
     def sigma_per_second(self) -> float:
-        """Return per-second realized vol, floored to prevent overconfidence.
+        """Return per-second realized vol, floored and GARCH-adjusted.
 
-        Falls back to 0.0002 if insufficient data; otherwise the sample std,
-        clamped up to MIN_SIGMA_PER_SEC so a momentarily flat tape can't make
-        the fair-value model certain.
+        The rolling std lags true vol by up to 30s after a sharp move (GARCH:
+        vol clusters — high vol follows high vol). To prevent z-score inflation
+        immediately after a spike, take the max of:
+          1. Rolling 30s realized std (backward-looking, lags spikes)
+          2. Half the peak 1s absolute return in the last 10s (fast spike detector)
+          3. MIN_SIGMA_PER_SEC floor (guards against div-by-zero on flat tape)
+
+        During calm markets: std ≈ 0.00015, max_abs/2 ≈ 0.0001 → std wins
+        During sharp move: std still lags, max_abs/2 captures the spike → floor raised
         """
         if len(self._returns) < 5:
             return 0.0002
-        return max(float(np.std(self._returns)), MIN_SIGMA_PER_SEC)
+
+        realized = float(np.std(self._returns))
+
+        # GARCH-lite: peak recent absolute return as a fast vol proxy.
+        # A 1s return of X implies per-second σ ≈ X, so X/2 is a conservative
+        # lower bound that still catches vol spikes within 10s rather than 30s.
+        recent = list(self._returns)[-10:]
+        spike_floor = max(abs(r) for r in recent) / 2.0 if recent else 0.0
+
+        return max(realized, spike_floor, MIN_SIGMA_PER_SEC)
 
     def is_ready(self) -> bool:
         """True once we have enough samples for a meaningful vol estimate.

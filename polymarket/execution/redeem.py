@@ -246,6 +246,11 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
                     "payout": payout,
                     "pnl": final_pnl,
                     "paper": False,
+                    # window_open_price + settlement_price let the nightly self-audit
+                    # independently recompute win/loss from raw BTC prices alone,
+                    # without trusting the same resolution logic being audited.
+                    "window_open_price": pos.window_open_price,
+                    "settlement_price": pos.settlement_price,
                 }
                 await asyncio.get_running_loop().run_in_executor(None, append_trade, redeem_record)
                 oracle.pending_trade_events.append({

@@ -180,6 +180,17 @@ async def _resolve_market_positions(oracle: OracleBuffer, market_id: str, loop) 
         if outcome is not None:
             # Gamma returned a definitive result.
             btc_went_up = outcome
+            # Independent cross-check against this position's own recorded
+            # window-open price — same rationale as _resolve_previous_window.
+            if pos.window_open_price > 0:
+                price_based_up = oracle.btc_price >= pos.window_open_price
+                if price_based_up != outcome:
+                    log.critical(
+                        f"[resolve-orphan] OUTCOME MISMATCH for {market_id}: Gamma says "
+                        f"{'UP' if outcome else 'DOWN'} but price comparison "
+                        f"({pos.window_open_price:.2f}→{oracle.btc_price:.2f}) says "
+                        f"{'UP' if price_based_up else 'DOWN'} — verify token mapping"
+                    )
         elif market_id.startswith("paper-") and pos.window_open_price > 0:
             # Paper markets have no Gamma outcome — price comparison is the
             # intended resolver for the synthetic window.
@@ -300,6 +311,16 @@ async def _resolve_previous_window(oracle: OracleBuffer, loop) -> None:
     if not unresolved:
         return
 
+    # Use the buffered price AT the window-close boundary, not the live price —
+    # resolution can run many seconds after close (30s poll + 5s grace) and BTC
+    # can cross the open in that gap, flipping the outcome relative to the
+    # on-chain settlement. price_at falls back to the live price only when no
+    # sample is buffered near the boundary.
+    close_px = oracle.price_at(prev.window_end_ts)
+    final_price = close_px if close_px is not None else oracle.btc_price
+    open_price  = prev.window_open_price or final_price
+    price_based_up = final_price >= open_price  # ties go to UP (Polymarket convention)
+
     # Try Gamma API first — returns True/False/None
     gamma_outcome: bool | None = None
     if not prev.market_id.startswith("paper-"):
@@ -308,25 +329,28 @@ async def _resolve_previous_window(oracle: OracleBuffer, loop) -> None:
         )
         if gamma_outcome is not None:
             log.info(f"[resolve] {prev.market_id}: Gamma outcome → {'UP' if gamma_outcome else 'DOWN'}")
+            # Independent cross-check: this comparison doesn't share the YES/NO
+            # array-indexing assumption that _fetch_market_outcome relies on, so
+            # it catches that whole bug class (and price-feed/window-open errors)
+            # even if a similar indexing mistake is reintroduced later. A
+            # disagreement here is a loud signal something upstream is wrong —
+            # Gamma still wins as the authoritative settlement source.
+            if gamma_outcome != price_based_up:
+                log.critical(
+                    f"[resolve] OUTCOME MISMATCH for {prev.market_id}: Gamma says "
+                    f"{'UP' if gamma_outcome else 'DOWN'} but BTC price comparison says "
+                    f"{'UP' if price_based_up else 'DOWN'} (open={open_price:.2f} "
+                    f"final={final_price:.2f}) — verify token mapping / price feed; "
+                    "using Gamma as authoritative"
+                )
 
-    # Fallback: BTC price comparison. Use the buffered price AT the window-close
-    # boundary, not the live price — resolution can run many seconds after close
-    # (30s poll + 5s grace) and BTC can cross the open in that gap, flipping the
-    # outcome relative to the on-chain settlement. price_at falls back to the live
-    # price only when no sample is buffered near the boundary.
+    # Fallback when Gamma hasn't published yet or this is a synthetic paper market.
     if gamma_outcome is None:
-        close_px = oracle.price_at(prev.window_end_ts)
-        final_price = close_px if close_px is not None else oracle.btc_price
-        open_price  = prev.window_open_price or final_price
-        gamma_outcome = final_price >= open_price  # ties go to UP (Polymarket convention)
+        gamma_outcome = price_based_up
         log.info(
             f"[resolve] {prev.market_id}: Gamma unavailable — "
             f"using BTC@close {open_price:.2f}→{final_price:.2f} → {'UP' if gamma_outcome else 'DOWN'}"
         )
-    else:
-        close_px = oracle.price_at(prev.window_end_ts)
-        final_price = close_px if close_px is not None else oracle.btc_price
-        open_price  = prev.window_open_price or final_price
 
     btc_went_up = gamma_outcome
     resolved_count = 0

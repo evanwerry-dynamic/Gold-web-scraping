@@ -84,10 +84,59 @@ async def calibrator_loop() -> None:
         await run_calibration()
 
 
+# A win rate this low on entries gated at ~93% model confidence (min_z_score=1.5)
+# is far more consistent with a systematic logic bug (direction/token mapping,
+# resolution inversion) than with bad luck or normal drift — flag it separately
+# from the drift-based recalibration path below, which would just mistune
+# already-correct parameters in response to a code bug.
+SYSTEMATIC_BUG_WIN_RATE = 0.30
+MIN_TRADES_FOR_AUDIT = 5
+
+
+def _self_audit(closed: list) -> None:
+    """Independently recompute win/loss from raw BTC prices and flag disagreement.
+
+    Reads window_open_price + settlement_price (recorded at redemption) and
+    compares price-based win/loss against the recorded pnl sign. This doesn't
+    reuse any of the resolution logic being audited, so it catches the same bug
+    class as the chainlink_rtds cross-check even if it's reintroduced elsewhere,
+    e.g. in the trade-recording path itself.
+    """
+    mismatches = []
+    for t in closed:
+        wop = t.get("window_open_price")
+        sp = t.get("settlement_price")
+        if not wop or not sp:
+            continue  # fill records / older trades without redemption data
+        bet_up = t.get("side") in ("UP", "YES")
+        price_based_won = bet_up == (sp >= wop)
+        recorded_won = t.get("pnl", 0) > 0
+        if price_based_won != recorded_won:
+            mismatches.append(t)
+
+    if mismatches:
+        log.critical(
+            f"SELF-AUDIT: {len(mismatches)}/{len(closed)} trade(s) where price-based "
+            "win/loss disagrees with the recorded outcome — likely a resolution or "
+            f"token-mapping bug, not bad luck. Sample: {json.dumps(mismatches[:3], indent=2, default=str)}"
+        )
+
+    if len(closed) >= MIN_TRADES_FOR_AUDIT:
+        win_rate = sum(1 for t in closed if t.get("pnl", 0) > 0) / len(closed)
+        if win_rate < SYSTEMATIC_BUG_WIN_RATE:
+            log.critical(
+                f"SELF-AUDIT: win rate {win_rate:.1%} over {len(closed)} trades is far "
+                "below what calibration drift could explain — investigate for a "
+                "systematic bug before adjusting parameters."
+            )
+
+
 async def run_calibration() -> None:
     """Analyze today's trades and adjust strategy params if model is drifting."""
     trades = load_trade_history(days=1)
     closed = [t for t in trades if "pnl" in t]
+
+    _self_audit(closed)
 
     if len(closed) < MIN_TRADES_FOR_CALIBRATION:
         log.info(f"Calibration skipped: only {len(closed)} closed trades today")

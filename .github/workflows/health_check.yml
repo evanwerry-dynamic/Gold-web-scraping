@@ -136,18 +136,7 @@ jobs:
     name: Railway Health Ping
     runs-on: ubuntu-latest
     steps:
-      - name: Ping /health endpoint
-        run: |
-          STATUS=$(curl -sf --max-time 10 \
-            https://gold-web-scraping-production.up.railway.app/health \
-            | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status','unknown'))")
-          echo "Railway status: $STATUS"
-          if [ "$STATUS" != "ok" ]; then
-            echo "::error::Railway health check returned status=$STATUS (expected ok)"
-            exit 1
-          fi
-
-      - name: Verify health response schema
+      - name: Ping /health endpoint and verify schema
         run: |
           curl -sf --max-time 10 \
             https://gold-web-scraping-production.up.railway.app/health \
@@ -156,6 +145,7 @@ jobs:
           data = json.load(sys.stdin)
           assert "status"  in data, "Missing 'status' field"
           assert "clients" in data, "Missing 'clients' field"
-          assert data["status"] == "ok"
+          assert data["status"] == "ok", \
+              f"Railway health check returned status={data['status']} (expected ok)"
           print(f"✓ Health OK — {data['clients']} WS client(s) connected")
           EOF

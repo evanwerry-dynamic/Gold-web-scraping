@@ -183,7 +183,6 @@ async def _check_ghost_positions(oracle: OracleBuffer) -> None:
                         token_id=token_id,
                         shares=payout,
                         side=side,
-                        paper=False,
                     )
                     # PHANTOM LOCKDOWN: only credit when tokens were actually
                     # burned on-chain. _redeem_position returns False when the

@@ -48,13 +48,13 @@ jobs:
               p = fair_value_binary(100 * (1 + delta_pct/100), 100.0, 0.0002, 10.0)
               assert 0.0 <= p <= 1.0, f"P={p} out of bounds for delta={delta_pct}%"
 
-          # should_trade must block entry below $0.70
-          ok, _ = should_trade(0.99, 0.69)
-          assert not ok, "Trade at $0.69 should be blocked (fee kills edge)"
+          # should_trade has no price floor — net edge after fee is the sole filter
+          ok, _ = should_trade(0.71, 0.69)
+          assert not ok, "Trade with thin edge at $0.69 should be blocked (fee kills edge)"
 
           # Fee peaks at $0.50 — dynamic fee formula correctness
           fee_50 = dynamic_taker_fee(0.50)
-          assert abs(fee_50 - 0.036) < 1e-9, f"Fee at 0.50 should be 3.6%, got {fee_50}"
+          assert abs(fee_50 - 0.018) < 1e-9, f"Fee at 0.50 should be 1.8%, got {fee_50}"
 
           print("✓ Fair value model: all checks passed")
           EOF

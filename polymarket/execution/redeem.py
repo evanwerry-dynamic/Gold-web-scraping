@@ -24,6 +24,38 @@ log = logging.getLogger(__name__)
 REDEEM_INTERVAL = 30.0
 
 
+def _engage_redeem_halt(oracle: "OracleBuffer | None", reason: str) -> None:
+    """Stop opening new live positions once the bot has PROVEN it cannot redeem.
+
+    A late-window momentum trade only profits when the winning outcome token is
+    later redeemed for collateral. If redemption is structurally broken — the
+    proxy wallet's owner is not our EOA, or no proxy call pattern works on-chain —
+    then every win is uncollectable and the bot bleeds 100% of entries as losses.
+    Entering more positions in that state only loses more money, so we engage the
+    emergency halt with a dedicated source that sanity_loop will not auto-clear.
+
+    This is gated on the bot's own on-chain ground truth (the startup probe's
+    owner/working result, or a real redemption revert) — not a guess — and is a
+    no-op in paper mode, where there is nothing to redeem.
+    """
+    if oracle is None or getattr(oracle, "paper_trading", False):
+        return
+    if oracle.emergency_halt:
+        # Already halted. Leave the existing source untouched — a manual kill
+        # switch must never be downgraded to a redeem halt (which sanity-style
+        # logic could otherwise treat differently). The bot is not entering
+        # either way, which is the whole point.
+        return
+    oracle.emergency_halt = True
+    oracle.halt_source = "redeem"
+    log.critical(
+        f"[redeem] LIVE TRADING HALTED — {reason}. New entries are blocked because "
+        "winning positions cannot be redeemed on-chain (you would pay to enter and "
+        "never collect). Fix the wallet/proxy configuration, then restart. "
+        "redeem_loop keeps retrying so any stuck wins are still claimed once fixed."
+    )
+
+
 class OnChainNotResolvedYet(RuntimeError):
     """The condition is not yet settled on-chain (payoutDenominator == 0).
 
@@ -34,7 +66,7 @@ class OnChainNotResolvedYet(RuntimeError):
     """
 
 
-async def _probe_proxy_at_startup() -> None:
+async def _probe_proxy_at_startup(oracle: "OracleBuffer | None" = None) -> None:
     """One-time startup diagnostic — no position needed.
 
     Checks who the proxy wallet thinks its owner is, and probes each of the 5
@@ -167,6 +199,15 @@ async def _probe_proxy_at_startup() -> None:
                 "instead). If match=True and fwd=0x1c8a498f too, the wallet uses a "
                 "different function name — check Polygonscan for the proxy contract ABI."
             )
+
+        # If we can PROVE redemption won't work, block live entries now rather than
+        # letting the bot pay into positions whose winnings it can never collect.
+        # owner_match is None means we couldn't read the owner — don't halt on an
+        # unknown; only halt on a definitive failure.
+        if working is None:
+            _engage_redeem_halt(oracle, "startup probe found no working redemption call pattern")
+        elif owner_match is False:
+            _engage_redeem_halt(oracle, "proxy wallet owner does not match POLYGON_PRIVATE_KEY")
     except Exception as exc:
         log.warning(f"[probe] Proxy startup probe failed: {exc!r}")
 
@@ -178,7 +219,7 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
     # Run a one-time startup probe so we know which proxy call pattern works
     # without waiting for a real position to redeem. This logs proxy.owner()
     # and which of the 5 ABI variants passes eth_call simulation.
-    asyncio.get_running_loop().create_task(_probe_proxy_at_startup())
+    asyncio.get_running_loop().create_task(_probe_proxy_at_startup(oracle))
 
     while True:
         await asyncio.sleep(REDEEM_INTERVAL)
@@ -297,6 +338,9 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
                     pos.redeemed = True  # Stop retrying to avoid log spam every 30s
                     async with oracle.bankroll_lock:
                         oracle.open_positions.pop(order_id, None)
+                    # A real on-chain redemption revert (not transient settlement lag)
+                    # proves winnings are uncollectable in this config — stop entering.
+                    _engage_redeem_halt(oracle, f"redemption reverted {pos.redeem_attempts}x for {pos.market_id}")
                 else:
                     log.error(
                         f"Redemption failed for {pos.market_id} "

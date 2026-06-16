@@ -138,11 +138,22 @@ jobs:
     steps:
       - name: Ping /health endpoint and verify schema
         run: |
-          curl -sf --max-time 10 \
-            https://gold-web-scraping-production.up.railway.app/health \
-            | python3 - <<'EOF'
+          # Retry up to 3 times with 5s gap (Railway app may be waking from sleep)
+          for attempt in 1 2 3; do
+            BODY=$(curl -s --max-time 15 \
+              https://gold-web-scraping-production.up.railway.app/health)
+            if [ -n "$BODY" ]; then break; fi
+            echo "Attempt $attempt: empty response, retrying in 5s..."
+            sleep 5
+          done
+          echo "$BODY" | python3 - <<'EOF'
           import sys, json
-          data = json.load(sys.stdin)
+          raw = sys.stdin.read()
+          try:
+              data = json.loads(raw)
+          except json.JSONDecodeError:
+              print(f"::error::Non-JSON response from /health: {raw[:200]!r}")
+              sys.exit(1)
           assert "status"  in data, "Missing 'status' field"
           assert "clients" in data, "Missing 'clients' field"
           assert data["status"] == "ok", \

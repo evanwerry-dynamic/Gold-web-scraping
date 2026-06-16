@@ -17,6 +17,7 @@ from typing import Any
 import requests
 
 from polymarket.fair_value import dynamic_taker_fee
+from polymarket.feeds.chainlink_rtds import map_yes_no_tokens
 from polymarket.oracle_buffer import OracleBuffer
 from polymarket.risk import RiskManager
 
@@ -206,11 +207,17 @@ def _fetch_active_btc_markets() -> list[dict[str, Any]]:
             tokens = json.loads(m.get("clobTokenIds", "[]"))
             if len(tokens) < 2 or not tokens[0] or not tokens[1]:
                 continue  # skip malformed market
-            yes_token_id = str(tokens[0])
-            no_token_id = str(tokens[1])
+            mapped = map_yes_no_tokens(m)
+            if mapped is None:
+                continue
+            yes_token_id, no_token_id = mapped
             if len(yes_token_id) < 10 or len(no_token_id) < 10:
                 continue  # skip if token IDs look wrong
-            yes_price = float(prices[0]) if prices else 0.5
+            # outcomePrices is index-parallel to clobTokenIds (untouched by the
+            # label-based remap above), so find the YES price at the same index
+            # the YES token id came from.
+            yes_idx = 0 if str(tokens[0]) == yes_token_id else 1
+            yes_price = float(prices[yes_idx]) if prices else 0.5
             # Extract numeric strike from question (e.g., "$65,200")
             match = re.search(r"\$([\d,]+)", q)
             strike = float(match.group(1).replace(",", "")) if match else 0.0

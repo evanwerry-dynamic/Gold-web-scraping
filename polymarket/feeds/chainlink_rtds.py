@@ -25,6 +25,49 @@ GAMMA_BASE = "https://gamma-api.polymarket.com"
 POLL_INTERVAL = 30.0  # seconds
 
 
+def map_yes_no_tokens(m: dict) -> tuple[str, str] | None:
+    """Map a Gamma market's clobTokenIds to (yes_token_id, no_token_id).
+
+    clobTokenIds, outcomes, and outcomePrices are parallel arrays, but the
+    array order is NOT guaranteed to put the affirmative outcome ("Up"/"Yes")
+    at index 0 — that was a previously unverified assumption. This reads the
+    "outcomes" label array and matches by text instead of trusting position,
+    which was the root cause of Strategy A systematically buying the token
+    that pays off opposite to its directional signal whenever the Gamma
+    outcome ordering didn't match the assumed [YES, NO] layout.
+    """
+    token_ids = json.loads(m["clobTokenIds"])
+    if len(token_ids) < 2:
+        return None
+    outcomes_raw = m.get("outcomes")
+    if outcomes_raw:
+        try:
+            labels = json.loads(outcomes_raw) if isinstance(outcomes_raw, str) else outcomes_raw
+            for i, label in enumerate(labels):
+                if str(label).strip().lower() in ("up", "yes"):
+                    return str(token_ids[i]), str(token_ids[1 - i])
+            log.warning(f"Outcome labels {labels!r} contain no Up/Yes — falling back to index order")
+        except Exception as exc:
+            log.warning(f"Failed to parse outcomes labels {outcomes_raw!r}: {exc!r} — falling back to index order")
+    else:
+        log.warning("Gamma market has no 'outcomes' field — falling back to index order (token[0]=YES)")
+    return str(token_ids[0]), str(token_ids[1])
+
+
+def _yes_outcome_index(market: dict) -> int:
+    """Return the index of the Up/Yes outcome in outcomePrices, verified by label."""
+    outcomes_raw = market.get("outcomes")
+    if outcomes_raw:
+        try:
+            labels = json.loads(outcomes_raw) if isinstance(outcomes_raw, str) else outcomes_raw
+            for i, label in enumerate(labels):
+                if str(label).strip().lower() in ("up", "yes"):
+                    return i
+        except Exception:
+            pass
+    return 0
+
+
 async def chainlink_rtds_loop(oracle: OracleBuffer) -> None:
     """Poll Gamma API for the active BTC 5-min window. Never exits.
 
@@ -213,12 +256,15 @@ def _fetch_market_outcome(market_id: str) -> bool | None:
         if not market.get("closed", False):
             return None  # Market still open — shouldn't happen for old markets
 
-        # outcomePrices is a JSON string like '["1", "0"]' (YES won) or '["0", "1"]' (NO won)
+        # outcomePrices is a JSON string like '["1", "0"]' or '["0", "1"]', parallel
+        # to the "outcomes" label array. Index 0 is NOT guaranteed to be YES/UP —
+        # verify against the label instead of assuming position.
         outcome_prices = market.get("outcomePrices")
         if outcome_prices:
             prices = json.loads(outcome_prices) if isinstance(outcome_prices, str) else outcome_prices
             if isinstance(prices, list) and len(prices) == 2:
-                yes_price = float(prices[0])
+                yes_idx = _yes_outcome_index(market)
+                yes_price = float(prices[yes_idx])
                 return yes_price >= 0.5  # True = YES/UP won
 
         winner = market.get("winner") or market.get("winnerOutcome", "")
@@ -352,7 +398,11 @@ def _fetch_active_btc_5m() -> ActiveMarket | None:
 
     m = markets[0]
     try:
-        token_ids = json.loads(m["clobTokenIds"])
+        mapped = map_yes_no_tokens(m)
+        if mapped is None:
+            log.warning(f"Malformed clobTokenIds for {slug}")
+            return None
+        yes_token_id, no_token_id = mapped
         end_date_str = m.get("endDate") or m.get("endDateIso", "")
         from datetime import datetime, timezone
         end_ts = datetime.fromisoformat(
@@ -365,8 +415,8 @@ def _fetch_active_btc_5m() -> ActiveMarket | None:
     return ActiveMarket(
         market_id=str(m.get("id", slug)),
         condition_id=m.get("conditionId", ""),
-        yes_token_id=str(token_ids[0]),
-        no_token_id=str(token_ids[1]),
+        yes_token_id=yes_token_id,
+        no_token_id=no_token_id,
         window_open_ts=float(window_ts),
         window_end_ts=end_ts,
     )

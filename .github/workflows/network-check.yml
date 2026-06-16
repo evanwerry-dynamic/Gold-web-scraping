@@ -1,0 +1,15 @@
+name: Network Check
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Curl target hosts
+        run: |
+          for url in https://railway.app https://backboard.railway.app https://railway.com https://example.com https://www.google.com; do
+            echo "== $url =="
+            curl -s -o /dev/null -w "status: %{http_code}\n" --max-time 10 "$url" || echo "curl failed"
+          done

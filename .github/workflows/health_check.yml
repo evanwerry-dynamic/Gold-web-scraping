@@ -146,9 +146,10 @@ jobs:
             echo "Attempt $attempt: empty response, retrying in 5s..."
             sleep 5
           done
-          echo "$BODY" | python3 - <<'EOF'
-          import sys, json
-          raw = sys.stdin.read()
+          export HEALTH_BODY="$BODY"
+          python3 <<'EOF'
+          import os, sys, json
+          raw = os.environ.get("HEALTH_BODY", "")
           try:
               data = json.loads(raw)
           except json.JSONDecodeError:

@@ -197,7 +197,7 @@ PAPER_TRADING=true          # Set false for live trading
 INITIAL_BANKROLL=500        # Starting pUSD (or paper dollars)
 MIN_DELTA_THRESHOLD=0.001   # 0.10% — minimum window move to trade
 MIN_EDGE_NET=0.05           # 5¢ minimum net edge after fees
-ENTRY_SECONDS_BEFORE_CLOSE=10
+ENTRY_SECONDS_BEFORE_CLOSE=60
 
 # External services
 BINANCE_WS_URL=wss://stream.binance.com:9443/ws

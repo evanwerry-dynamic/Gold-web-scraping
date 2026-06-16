@@ -87,7 +87,7 @@ async def run() -> None:
     # latency buffers superseded by the full-window + edge-gate architecture.
     _OLD_BAD_DEFAULTS = {
         "min_edge_net": {0.07, 0.09},
-        "entry_seconds_before_close": {12.0, 15.0, 60.0, 295.0},  # all previous defaults; now fixed at 30s
+        "entry_seconds_before_close": {12.0, 15.0, 30.0, 295.0},  # all previous defaults; now fixed at 60s
         "min_order_size_usd": {0.0},
         "min_delta_threshold": {0.001},   # 0.10% was too high — blocked all normal-vol signals
         "kelly_max_pct": {0.03, 0.05},    # too small at micro-bankroll — gave $0.29-$0.49, below $1 CLOB minimum

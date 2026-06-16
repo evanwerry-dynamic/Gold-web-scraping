@@ -32,7 +32,7 @@ log = logging.getLogger(__name__)
 # Env-var defaults for initial startup (overridden by LIVE_PARAMS at runtime)
 # 60s: late enough that BTC direction is committed, early enough the book may not
 # have fully repriced the move (Chainlink oracle lag ~10s; MM repricing lag ~30s).
-_ENTRY_WINDOW_SECONDS_DEFAULT = float(os.getenv("ENTRY_SECONDS_BEFORE_CLOSE", "30"))
+_ENTRY_WINDOW_SECONDS_DEFAULT = float(os.getenv("ENTRY_SECONDS_BEFORE_CLOSE", "60"))
 _MIN_DELTA_DEFAULT = float(os.getenv("MIN_DELTA_THRESHOLD", "0.0003"))  # 0.03% — typical BTC 5-min move is 0.02-0.05%
 _MIN_EDGE_NET_DEFAULT = float(os.getenv("MIN_EDGE_NET", "0.02"))  # 2¢ net after fees
 MIN_ORDER_SIZE_USD = float(os.getenv("MIN_ORDER_SIZE_USD", "0.50"))

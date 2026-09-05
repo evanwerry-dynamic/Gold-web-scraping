@@ -234,30 +234,27 @@ async def redeem_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = Non
 
         for order_id, pos in to_redeem:
             try:
-                payout = pos.shares * pos.resolution  # resolution=1.0 → won
-                if payout > 0:
-                    redeemed_ok = await _redeem_position(
+                # Credit the ACTUAL collateral received (0 for a losing outcome),
+                # never the assumed share count. _redeem_position returns the real
+                # on-chain balance delta, so a loser is booked as the loss it is and
+                # win-rate stats stay honest.
+                payout = 0.0
+                expected = pos.shares * pos.resolution  # resolution=1.0 → won
+                if expected > 0:
+                    redeemed_usd = await _redeem_position(
                         pos.condition_id, pos.token_id, pos.shares,
                         pos.side,
                     )
-                    # PHANTOM-WIN LOCKDOWN: only credit bankroll when redemption
-                    # actually burned on-chain tokens for collateral. If no tokens
-                    # were found (a mis-scored "win" or an already-settled
-                    # position), _redeem_position returns False — crediting payout
-                    # here would invent money that doesn't exist on-chain. Book it
-                    # as no payout so the position's cost is realised as the loss
-                    # it actually was.
-                    if redeemed_ok:
+                    if redeemed_usd > 0:
                         async with oracle.bankroll_lock:
-                            oracle.bankroll += payout
+                            oracle.bankroll += redeemed_usd
+                        payout = redeemed_usd
                     else:
                         log.warning(
-                            f"Redeem found no on-chain tokens for {pos.market_id} "
+                            f"Redeem returned 0 collateral for {pos.market_id} "
                             f"(side={pos.side}, cond={pos.condition_id[:16]}…) — "
-                            "treating as no payout (phantom or already-settled). "
-                            "Bankroll NOT credited."
+                            "losing outcome or already-settled. Booked as no payout."
                         )
-                        payout = 0.0
 
                 # Only mark redeemed after redemption succeeds — suppresses retries on tx revert
                 pos.redeemed = True
@@ -364,6 +361,15 @@ def _to_bytes(data) -> bytes:
     if isinstance(data, str):
         return bytes.fromhex(data[2:] if data.startswith(("0x", "0X")) else data)
     return bytes(data)  # fallback: try bytes() constructor
+
+# Minimal ERC-20 view ABI — used to measure the holder's collateral balance
+# before/after a redeem so we credit the ACTUAL payout received (0 for a losing
+# outcome) instead of the assumed share count. USDC.e and pUSD are both 6-decimal.
+_ERC20_ABI = [
+    {"inputs": [{"name": "account", "type": "address"}],
+     "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}],
+     "stateMutability": "view", "type": "function"},
+]
 
 # ConditionalTokens (Gnosis CTF). redeemPositions burns the CALLER's own outcome
 # tokens and pays the collateral to the caller — no setApprovalForAll required.
@@ -778,10 +784,11 @@ async def _redeem_position(
     on-chain ERC-1155 balance.
 
     Returns:
-        True  — tokens were actually redeemed on-chain.
-        False — the holder owns no outcome tokens for this condition, so nothing
-                was redeemed (phantom win or already-settled). The caller must NOT
-                credit the bankroll in this case.
+        float — the ACTUAL collateral (USDC.e/pUSD) received, measured as the
+                holder's balance delta across the redeem. 0.0 when the holder owns
+                no tokens (already settled) or the outcome lost (redeem succeeds but
+                pays nothing). Callers credit exactly this amount — never the assumed
+                share count — so a losing redeem is booked as the loss it is.
     Raises:
         OnChainNotResolvedYet — settlement hasn't hit the chain yet (retry later).
         RuntimeError / Exception — a real failure that should count toward retries.
@@ -833,7 +840,7 @@ async def _redeem_position(
             f"[live] No outcome-token balance for {condition_id[:16]}… at "
             f"{holder[:10]}… — already redeemed or not held here. Skipping."
         )
-        return False
+        return 0.0
     log.info(
         f"[live] Holder {holder[:10]}… owns {bal} units "
         f"(collateral={collateral[:10]}…, idx={idx})"
@@ -868,8 +875,36 @@ async def _redeem_position(
     except Exception as exc:
         log.warning(f"[live] On-chain resolution probe failed: {exc!r}")
 
+    # Measure the holder's collateral balance before and after so we credit the
+    # ACTUAL payout received, not the assumed share count. A losing-outcome redeem
+    # still succeeds on-chain but pays 0 collateral — crediting `shares` there would
+    # book a loss as a win and corrupt win-rate stats. USDC.e/pUSD are 6-decimal.
+    erc20 = w3.eth.contract(address=w3.to_checksum_address(collateral), abi=_ERC20_ABI)
+    holder_cs = w3.to_checksum_address(holder)
+    try:
+        bal_before = await loop.run_in_executor(
+            None, lambda: erc20.functions.balanceOf(holder_cs).call()
+        )
+    except Exception:
+        bal_before = None
+
     calls = _build_redeem_calls(w3, ct, collateral, cid_bytes, idx=idx if idx else 1)
     tx_hex = await _execute_calls(w3, acct, pk, proxy, calls, loop)
 
-    log.info(f"[live] Redeemed {condition_id[:16]}…: {shares:.2f}sh → USDC.e, tx {tx_hex}")
-    return True
+    redeemed_usd = 0.0
+    if bal_before is not None:
+        try:
+            bal_after = await loop.run_in_executor(
+                None, lambda: erc20.functions.balanceOf(holder_cs).call()
+            )
+            redeemed_usd = max(0.0, (bal_after - bal_before) / 1e6)
+        except Exception as exc:
+            log.warning(
+                f"[live] post-redeem balance read failed: {exc!r} — crediting 0 "
+                "(bankroll-vs-chain reconcile will true up)"
+            )
+    log.info(
+        f"[live] Redeemed {condition_id[:16]}…: {shares:.2f}sh → "
+        f"{redeemed_usd:.2f} collateral (tx {tx_hex})"
+    )
+    return redeemed_usd

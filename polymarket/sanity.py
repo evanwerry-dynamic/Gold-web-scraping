@@ -178,28 +178,29 @@ async def _check_ghost_positions(oracle: OracleBuffer) -> None:
                         f"[sanity] Attempting ghost redemption: "
                         f"condition={condition_id[:16]}… payout≈{payout:.2f}"
                     )
-                    redeemed_ok = await _redeem_position(
+                    # Credit the ACTUAL collateral received, not the assumed size.
+                    # _redeem_position returns the real on-chain balance delta: 0 for
+                    # a losing outcome (the redeem tx succeeds but pays nothing) or an
+                    # already-settled position. Crediting the assumed `payout` there
+                    # would invent money with no on-chain backing and book a loser as
+                    # a win — corrupting win-rate stats.
+                    redeemed_usd = await _redeem_position(
                         condition_id=condition_id,
                         token_id=token_id,
                         shares=payout,
                         side=side,
                     )
-                    # PHANTOM LOCKDOWN: only credit when tokens were actually
-                    # burned on-chain. _redeem_position returns False when the
-                    # holder owns no tokens (already settled / mis-detected) — in
-                    # that case crediting would invent money with no on-chain
-                    # backing (and could double-credit with startup_position_sync).
-                    if redeemed_ok:
+                    if redeemed_usd > 0:
                         async with oracle.bankroll_lock:
-                            oracle.bankroll += payout
+                            oracle.bankroll += redeemed_usd
                         log.info(
-                            f"[sanity] Ghost redemption succeeded: +{payout:.2f} → bankroll "
+                            f"[sanity] Ghost redemption succeeded: +{redeemed_usd:.2f} → bankroll "
                             f"now {oracle.bankroll:.2f}"
                         )
                     else:
                         log.info(
-                            f"[sanity] Ghost {condition_id[:16]}… had no on-chain tokens "
-                            "— nothing redeemed, bankroll unchanged"
+                            f"[sanity] Ghost {condition_id[:16]}… redeemed 0 collateral "
+                            "(losing outcome / already settled) — bankroll unchanged"
                         )
                 except Exception as redeem_exc:
                     log.warning(

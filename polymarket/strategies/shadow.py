@@ -31,19 +31,21 @@ from polymarket.oracle_buffer import OracleBuffer
 log = logging.getLogger(__name__)
 
 SCAN_INTERVAL = 2.0
-DECISION_T = 30.0          # seconds-remaining at which we snapshot the signal
-ENTRY_ZONE = 120.0         # start observing this many seconds before close
+# Multiple decision points so we can test EARLIER entry (does the book lag a fresh
+# move before repricing?) not just the late T-30 point where taking is efficient.
+CHECKPOINTS = (240.0, 120.0, 30.0)
+ENTRY_ZONE = 250.0         # start observing this many seconds before close
 ASK_FRESH_S = 10.0         # a side's ask counts as real only if it ticked within this
 
 
 class _WindowRec:
-    __slots__ = ("market_id", "open_price", "snap", "min_ask_sum")
+    __slots__ = ("market_id", "open_price", "snaps", "min_ask_sum")
 
     def __init__(self, market_id: str, open_price: float):
         self.market_id = market_id
         self.open_price = open_price
-        self.snap: dict | None = None      # decision-point snapshot
-        self.min_ask_sum: float = 2.0      # best (lowest) yes+no ask with both fresh
+        self.snaps: dict[float, dict] = {}  # checkpoint secs -> snapshot
+        self.min_ask_sum: float = 2.0       # best (lowest) yes+no ask with both fresh
 
 
 def _sigma_eff(oracle: OracleBuffer, delta: float, secs_left: float) -> float:
@@ -91,51 +93,58 @@ async def shadow_loop(oracle: OracleBuffer) -> None:
             if yes_fresh and no_fresh:
                 cur.min_ask_sum = min(cur.min_ask_sum, m.yes_ask + m.no_ask)
 
-            # Take the decision snapshot once, at the first scan inside DECISION_T.
-            if cur.snap is None and secs_left <= DECISION_T:
-                sigma = _sigma_eff(oracle, delta, secs_left)
-                denom = sigma * math.sqrt(max(secs_left, 0.01))
-                z = delta / denom if denom > 0 else 0.0
-                fair_up = fair_value_binary(
-                    oracle.btc_price, cur.open_price or oracle.btc_price, sigma, secs_left
-                )
-                cur.snap = {
-                    "secs": round(secs_left, 1),
-                    "z": round(z, 3),
-                    "delta_pct": round(delta * 100, 4),
-                    "yes_ask": round(m.yes_ask, 3),
-                    "no_ask": round(m.no_ask, 3),
-                    "yes_fresh": int(yes_fresh),
-                    "no_fresh": int(no_fresh),
-                    "fair_up": round(fair_up, 3),
-                    "btc": round(oracle.btc_price, 2),
-                }
+            # Snapshot at each checkpoint once (first scan at/under that secs_left).
+            for cp in CHECKPOINTS:
+                if cp not in cur.snaps and secs_left <= cp:
+                    sigma = _sigma_eff(oracle, delta, secs_left)
+                    denom = sigma * math.sqrt(max(secs_left, 0.01))
+                    z = delta / denom if denom > 0 else 0.0
+                    fair_up = fair_value_binary(
+                        oracle.btc_price, cur.open_price or oracle.btc_price, sigma, secs_left
+                    )
+                    cur.snaps[cp] = {
+                        "secs": round(secs_left, 1),
+                        "z": round(z, 3),
+                        "fair_up": round(fair_up, 3),
+                        # Both sides of the book: asks (taker cost) + bids (maker sell).
+                        # Spread = ask - bid on each side is the maker's raw edge.
+                        "yes_ask": round(m.yes_ask, 3),
+                        "yes_bid": round(m.yes_bid, 3),
+                        "no_ask": round(m.no_ask, 3),
+                        "no_bid": round(m.no_bid, 3),
+                        "yes_fresh": int(yes_fresh),
+                        "no_fresh": int(no_fresh),
+                    }
         except Exception as exc:
             log.debug(f"[shadow] scan error: {exc!r}")
 
 
 def _emit(rec: _WindowRec, settle: float) -> None:
-    """Log one structured, harvestable line summarizing the resolved window."""
-    if rec.snap is None or not rec.open_price or not settle:
+    """Log one structured, harvestable line summarizing the resolved window.
+
+    Includes a snapshot at each checkpoint (T240/T120/T30) with both-sided book
+    (asks+bids) so the monitor job can backtest, in parallel: (a) Strategy A at
+    different entry times, (b) maker spread capture per side, (c) arbitrage.
+    """
+    if not rec.snaps or not rec.open_price or not settle:
         return
     outcome = "UP" if settle >= rec.open_price else "DOWN"
-    s = rec.snap
     arb = round(1.0 - rec.min_ask_sum, 4) if rec.min_ask_sum < 2.0 else None
-    log.info(
-        "[SHADOW] " + " ".join([
-            f"mkt={rec.market_id}",
-            f"open={rec.open_price:.2f}",
-            f"settle={settle:.2f}",
-            f"outcome={outcome}",
-            f"t={s['secs']}",
-            f"z={s['z']}",
-            f"delta_pct={s['delta_pct']}",
-            f"fair_up={s['fair_up']}",
-            f"yes_ask={s['yes_ask']}",
-            f"no_ask={s['no_ask']}",
-            f"yes_fresh={s['yes_fresh']}",
-            f"no_fresh={s['no_fresh']}",
-            # arb_gross = 1 - (yes_ask+no_ask): positive => risk-free before fees
-            f"arb_gross={arb if arb is not None else 'na'}",
-        ])
-    )
+    parts = [
+        f"mkt={rec.market_id}",
+        f"open={rec.open_price:.2f}",
+        f"settle={settle:.2f}",
+        f"outcome={outcome}",
+        f"arb_gross={arb if arb is not None else 'na'}",
+    ]
+    # One compact group per checkpoint: cNNN[secs,z,fair,ya,yb,na,nb,yf,nf]
+    for cp in CHECKPOINTS:
+        s = rec.snaps.get(cp)
+        if not s:
+            continue
+        parts.append(
+            f"c{int(cp)}[t={s['secs']},z={s['z']},fair={s['fair_up']},"
+            f"ya={s['yes_ask']},yb={s['yes_bid']},na={s['no_ask']},nb={s['no_bid']},"
+            f"yf={s['yes_fresh']},nf={s['no_fresh']}]"
+        )
+    log.info("[SHADOW] " + " ".join(parts))

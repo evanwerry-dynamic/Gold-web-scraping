@@ -35,6 +35,13 @@ SANITY_INTERVAL = 60.0
 MIN_MATIC = float(os.getenv("MIN_MATIC", "0.02"))
 WS_STALE_THRESHOLD = 30.0  # seconds
 
+# Condition IDs whose ghost redemption already returned 0 collateral (losing
+# outcome or already-settled). Polymarket's Data API keeps listing these dead
+# positions indefinitely, so without this guard sanity would re-submit a real
+# ~700k-gas redeem tx for each of them every cycle — a slow POL gas bleed that
+# eventually trips the low-gas halt. We attempt each ghost at most once, then skip.
+_ZERO_REDEEM_GHOSTS: set[str] = set()
+
 
 async def sanity_loop(oracle: OracleBuffer, risk_mgr: "RiskManager | None" = None) -> None:
     """Sanity checks every 60s. Never exits."""
@@ -161,11 +168,28 @@ async def _check_ghost_positions(oracle: OracleBuffer) -> None:
             outcome = str(pos_data.get("outcome") or pos_data.get("side") or "YES").upper()
             side = "YES" if outcome in ("YES", "UP", "1") else "NO"
 
+            # Skip ghosts we've already proven pay 0 — avoids a per-cycle gas bleed
+            # from re-redeeming dead positions the Data API never stops listing.
+            if condition_id and condition_id in _ZERO_REDEEM_GHOSTS:
+                continue
+
             log.error(
                 f"GHOST POSITION: token={token_id[:12]}… size={size:.4f} "
                 f"conditionId={condition_id[:16] if condition_id else 'UNKNOWN'}… "
                 f"market={title} — not in bot tracking"
             )
+
+            # If Polymarket's Data API explicitly says this position is not
+            # redeemable (losing/unsettled), don't spend gas trying — record it as
+            # dead so we never retry, and move on.
+            if pos_data.get("redeemable") is False:
+                if condition_id:
+                    _ZERO_REDEEM_GHOSTS.add(condition_id)
+                log.info(
+                    f"[sanity] Ghost {condition_id[:16] if condition_id else token_id[:12]}… "
+                    "marked not-redeemable by Data API — skipping (no gas spent)"
+                )
+                continue
 
             # Attempt on-chain redemption using the confirmed forward() ABI.
             if _hex_ok and condition_id and size > 0:
@@ -198,9 +222,12 @@ async def _check_ghost_positions(oracle: OracleBuffer) -> None:
                             f"now {oracle.bankroll:.2f}"
                         )
                     else:
+                        # Proven worthless — never retry (stops the per-cycle gas bleed).
+                        _ZERO_REDEEM_GHOSTS.add(condition_id)
                         log.info(
                             f"[sanity] Ghost {condition_id[:16]}… redeemed 0 collateral "
-                            "(losing outcome / already settled) — bankroll unchanged"
+                            "(losing outcome / already settled) — bankroll unchanged, "
+                            "marked dead (won't retry)"
                         )
                 except Exception as redeem_exc:
                     log.warning(

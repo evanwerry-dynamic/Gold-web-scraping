@@ -72,6 +72,33 @@ async def run() -> None:
     if oracle.bankroll <= 0:
         log.warning(f"Bankroll is {oracle.bankroll} after restore — resetting to ${initial_bankroll}")
         oracle.bankroll = initial_bankroll
+
+    # Reconcile bankroll to on-chain collateral (ground truth). INITIAL_BANKROLL is
+    # only a seed; the wallet's actual free USDC (+ funds locked in open positions)
+    # is authoritative. Without this, a stale INITIAL_BANKROLL above the real balance
+    # makes sanity's bankroll-vs-chain check reconcile down on its first pass anyway —
+    # doing it here seeds risk limits (peak/daily/monthly, below) from the true value
+    # from the very first trade instead of one sanity cycle later.
+    try:
+        from polymarket.execution.wallet import get_collateral_balance
+        _chain_balance = await get_collateral_balance()
+        if _chain_balance > 0:
+            _locked = sum(
+                p.cost_basis for p in oracle.open_positions.values() if not p.resolved
+            )
+            _true_bankroll = _chain_balance + _locked
+            if abs(_true_bankroll - oracle.bankroll) > 0.01:
+                log.warning(
+                    f"Bankroll reconciled to on-chain truth at startup: "
+                    f"${oracle.bankroll:.2f} → ${_true_bankroll:.2f} "
+                    f"(free=${_chain_balance:.2f} + locked=${_locked:.2f})"
+                )
+                oracle.bankroll = _true_bankroll
+        else:
+            log.warning("Startup bankroll reconciliation: chain balance read 0 — keeping seed")
+    except Exception as _exc:
+        log.warning(f"Startup bankroll reconciliation skipped: {_exc!r}")
+
     # Sync peak to current bankroll — prevents false drawdown halt after redeploy
     # if persisted bankroll is below the original initial (e.g. after a losing session).
     oracle.peak_bankroll = max(oracle.bankroll, oracle.peak_bankroll)

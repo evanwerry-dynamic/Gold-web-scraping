@@ -356,25 +356,41 @@ async def _check_pusd_allowance(oracle: OracleBuffer) -> bool:
 async def _check_bankroll_vs_chain(oracle: OracleBuffer) -> bool:
     """Reconcile oracle.bankroll against on-chain collateral (pUSD + USDC.e).
 
-    Redemptions pay out USDC.e while trading uses pUSD, so both are counted —
-    otherwise a freshly redeemed win looks like a 20%+ shortfall and false-halts.
+    On-chain free collateral PLUS funds locked in open (unresolved) positions is
+    ground truth. Redemptions pay out USDC.e while trading uses pUSD, so both are
+    counted in get_collateral_balance().
+
+    If oracle.bankroll drifts ABOVE that truth — a stale INITIAL_BANKROLL seed, or a
+    genuine shortfall — we reconcile DOWN to the true value rather than halting.
+    Halting cannot recover funds and permanently blocks legitimate trading on a
+    standing config gap; trading at the smaller, true size is the correct and safe
+    response. This never reconciles UP (gains are credited on position resolution),
+    so it can only ever REDUCE risk. Returns False always — a shortfall is no longer
+    a halt condition.
     """
     try:
         chain_balance = await get_collateral_balance()
         # A reading of exactly 0 while we believe we hold funds is almost always
-        # an RPC error, not a real drain — don't halt on it.
+        # an RPC error, not a real drain — don't touch bankroll.
         if chain_balance <= 0 and oracle.bankroll > 0:
-            log.warning("Bankroll reconciliation: chain balance read as 0 — treating as RPC blip, not halting")
+            log.warning("Bankroll reconciliation: chain balance read as 0 — treating as RPC blip, not adjusting")
             return False
-        if oracle.bankroll > 0 and chain_balance < oracle.bankroll * 0.8:
-            log.critical(
-                f"BANKROLL MISMATCH: on-chain collateral={chain_balance:.2f} is more than 20% "
-                f"below oracle.bankroll={oracle.bankroll:.2f} — halting trading"
-            )
-            return True
-        log.debug(
-            f"Bankroll reconciled: chain={chain_balance:.2f}, oracle={oracle.bankroll:.2f}"
+        locked = sum(
+            p.cost_basis for p in oracle.open_positions.values() if not p.resolved
         )
+        true_bankroll = chain_balance + locked
+        if true_bankroll < oracle.bankroll - 0.01:
+            async with oracle.bankroll_lock:
+                oracle.bankroll = true_bankroll
+            log.warning(
+                f"Bankroll reconciled DOWN to on-chain truth: {oracle.bankroll:.2f} "
+                f"(free={chain_balance:.2f} + locked={locked:.2f}) — trading continues at true size"
+            )
+        else:
+            log.debug(
+                f"Bankroll reconciled: chain_free={chain_balance:.2f}, locked={locked:.2f}, "
+                f"oracle={oracle.bankroll:.2f}"
+            )
     except Exception as exc:
         log.warning(f"Bankroll reconciliation failed: {exc!r}")
     return False

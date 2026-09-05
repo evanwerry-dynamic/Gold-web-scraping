@@ -47,6 +47,7 @@ async def run() -> None:
     from polymarket.strategies.signal_loop import signal_loop
     from polymarket.strategies.maker_loop import maker_loop
     from polymarket.strategies.arb_loop import arb_loop
+    from polymarket.strategies.shadow import shadow_loop
     from polymarket.execution.oms import oms_loop
     from polymarket.execution.redeem import redeem_loop
     from polymarket.sanity import sanity_loop
@@ -269,6 +270,9 @@ async def run() -> None:
         _guard(lambda: persist_loop(oracle),                       "persist_loop"),
         _guard(lambda: calibrator_loop(),                          "calibrator"),
         _guard(lambda: _dashboard_broadcast(oracle),               "dashboard_broadcast"),
+        # Read-only shadow evaluator — always on, places no orders. Emits [SHADOW]
+        # lines the monitor job turns into a parallel backtest of A-variants / arb.
+        _guard(lambda: shadow_loop(oracle),                        "shadow_loop"),
     ]
     if enable_signal:
         tasks.append(_guard(lambda: signal_loop(oracle, order_queue, risk_mgr), "signal_loop"))

@@ -690,36 +690,77 @@ async def _execute_calls(w3, acct, pk: str, proxy: str, calls, loop) -> str:
         return last
 
     proxy_addr = w3.to_checksum_address(proxy)
+    from polymarket.execution.wallet import PROXY_WALLET_FACTORY
+    factory_addr = w3.to_checksum_address(PROXY_WALLET_FACTORY)
 
-    # Startup probe confirmed: wallet.forward(address,uint256,bytes) is the correct
-    # function for this Polymarket ProxyWallet (selector 0xd7f31eb9, match=True).
-    # The Gnosis Safe detection (getOwners) was incorrectly returning a non-empty
-    # list on the ProxyWallet (it has a function matching the ABI selector), which
-    # routed redemptions through execTransaction instead of forward() — causing the
-    # "registered owner does not match" revert. Skip Safe detection entirely.
-    # All other patterns (proxy/execute) hit the fallback and revert with 0x1c8a498f.
-    # Call forward() directly from the EOA — owner()==EOA so msg.sender==owner passes.
+    # The proxy contract TYPE is not known a priori and differs between Polymarket
+    # account types: browser ProxyWallet (forward), factory-relayed 1proxy
+    # (factory.proxy batch, with or without a typeCode field), legacy Gnosis Safe,
+    # or ERC-4337 (execute). Hardcoding one pattern breaks silently the moment the
+    # wallet is a different type — the symptom we hit was forward() reverting with
+    # 0x3c10b94e while factory.proxy(to,value,data) was the pattern that actually
+    # works (exactly what the startup probe reports as working=…).
+    #
+    # So mirror the probe: build every known execution wrapper for the REAL redeem
+    # call and use whichever one passes eth_call simulation. This self-adapts to
+    # the wallet instead of trusting a stale comment.
     single_to, single_data = calls[0]
+    inner_to = w3.to_checksum_address(single_to)
+    inner_data = _to_bytes(single_data)
+
+    factory_tc = w3.eth.contract(address=factory_addr, abi=_ONE_PROXY_ABI)
+    factory_no_tc = w3.eth.contract(address=factory_addr, abi=_ONE_PROXY_NO_TC_ABI)
+    wallet_tc = w3.eth.contract(address=proxy_addr, abi=_ONE_PROXY_ABI)
+    wallet_no_tc = w3.eth.contract(address=proxy_addr, abi=_ONE_PROXY_NO_TC_ABI)
+    wallet_exec = w3.eth.contract(address=proxy_addr, abi=_EXECUTE_ABI)
     wallet_fwd = w3.eth.contract(address=proxy_addr, abi=_FORWARD_ABI)
-    calldata = wallet_fwd.encode_abi("forward", args=[
-        w3.to_checksum_address(single_to), 0, _to_bytes(single_data)
-    ])
+    wallet_fwd_batch = w3.eth.contract(address=proxy_addr, abi=_FORWARD_BATCH_ABI)
 
-    try:
-        await loop.run_in_executor(
-            None, lambda: w3.eth.call(
-                {"from": acct.address, "to": proxy_addr, "data": calldata}
+    pcalls_tc = [(0, inner_to, 0, inner_data)]
+    pcalls_no_tc = [(inner_to, 0, inner_data)]
+
+    # Order mirrors the probe; the first to simulate OK is used.
+    candidates = [
+        ("wallet.forward(to,value,data)", proxy_addr,
+         wallet_fwd.encode_abi("forward", args=[inner_to, 0, inner_data])),
+        ("factory.proxy(to,value,data)", factory_addr,
+         factory_no_tc.encode_abi("proxy", args=[pcalls_no_tc])),
+        ("factory.proxy(typeCode,to,value,data)", factory_addr,
+         factory_tc.encode_abi("proxy", args=[pcalls_tc])),
+        ("wallet.proxy(to,value,data)", proxy_addr,
+         wallet_no_tc.encode_abi("proxy", args=[pcalls_no_tc])),
+        ("wallet.proxy(typeCode,to,value,data)", proxy_addr,
+         wallet_tc.encode_abi("proxy", args=[pcalls_tc])),
+        ("wallet.forward(calls[])", proxy_addr,
+         wallet_fwd_batch.encode_abi("forward", args=[[(inner_to, 0, inner_data)]])),
+        ("wallet.execute(dest,value,func)", proxy_addr,
+         wallet_exec.encode_abi("execute", args=[inner_to, 0, inner_data])),
+    ]
+
+    chosen = None
+    for label, target, calldata in candidates:
+        try:
+            await loop.run_in_executor(
+                None, lambda t=target, d=calldata: w3.eth.call(
+                    {"from": acct.address, "to": t, "data": d}
+                )
             )
-        )
-    except Exception as sim_exc:
+            chosen = (label, target, calldata)
+            log.info(f"[live] redeem via {label} — sim OK, submitting tx")
+            break
+        except Exception as sim_exc:
+            log.debug(f"[live] redeem pattern {label} sim failed: {_revert_selector(sim_exc)}")
+
+    if chosen is None:
         raise RuntimeError(
-            f"[live] forward() sim failed: {_extract_revert_hex(sim_exc)}"
+            "[live] no proxy execution pattern simulated OK for redeem "
+            "(wallet may not be controlled by POLYGON_PRIVATE_KEY — redeem manually)"
         )
 
-    log.info("[live] forward() sim OK — submitting tx")
-    tx_hash, receipt = await _send_tx(w3, acct, pk, proxy_addr, calldata, loop, gas=700_000)
+    label, target, calldata = chosen
+    tx_hash, receipt = await _send_tx(w3, acct, pk, target, calldata, loop, gas=700_000)
     if receipt.status != 1:
-        raise RuntimeError(f"wallet.forward() reverted on-chain: {tx_hash.hex()}")
+        raise RuntimeError(f"redeem reverted on-chain via {label}: {tx_hash.hex()}")
     return tx_hash.hex()
 
 

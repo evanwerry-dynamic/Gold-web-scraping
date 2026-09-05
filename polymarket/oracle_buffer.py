@@ -73,13 +73,23 @@ class ActiveMarket:
     window_open_ts: float
     window_end_ts: float
     window_open_price: float = 0.0
-    yes_ask: float = 0.85
-    no_ask: float = 0.85
+    # Asks default to 0.999 (no tradeable edge) so a side that has NEVER received a
+    # real book frame can never look like a cheap, high-edge buy. A real price
+    # overwrites this on the first genuine tick. (Was 0.85 — that default masqueraded
+    # as a live price and let Strategy A trade a side whose book never updated.)
+    yes_ask: float = 0.999
+    no_ask: float = 0.999
     yes_bid: float = 0.82
     no_bid: float = 0.82
     bid_depth: float = 0.0
     ask_depth: float = 0.0
     last_book_update_ts: float = 0.0  # M5: track last orderbook update
+    # Per-side ask freshness. A shared last_book_update_ts is set when EITHER side
+    # updates, so it cannot tell whether the side being traded has a real, fresh
+    # ask. These are 0.0 until that specific side receives a genuine ask tick, and
+    # the signal loop requires the traded side's ask to be fresh before entering.
+    yes_ask_ts: float = 0.0
+    no_ask_ts: float = 0.0
 
 
 @dataclass

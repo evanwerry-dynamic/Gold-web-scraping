@@ -180,6 +180,7 @@ def _update_orderbook(oracle: OracleBuffer, msg: dict) -> None:
             m.yes_ask = valid_ask
             m.ask_depth = adepth
             m.last_book_update_ts = now
+            m.yes_ask_ts = now
         # Non-cross guard: if only one side updated this frame and it now crosses
         # the stale opposite side, the stale side is wrong. Pull the ask up to the
         # bid (conservative — never lets the bot believe it can buy cheaper than
@@ -195,6 +196,7 @@ def _update_orderbook(oracle: OracleBuffer, msg: dict) -> None:
             m.no_ask = valid_ask
             m.ask_depth = adepth
             m.last_book_update_ts = now
+            m.no_ask_ts = now
         if m.no_bid >= m.no_ask:
             m.no_ask = min(0.999, m.no_bid)
 

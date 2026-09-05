@@ -42,6 +42,11 @@ KELLY_MAX_PCT = float(os.getenv("KELLY_MAX_PCT", "0.15"))  # 15% at micro-bankro
 # not enough margin over taker fees. 1.5 requires decisive BTC moves, not coin-flips.
 _MIN_Z_SCORE_DEFAULT = float(os.getenv("MIN_Z_SCORE", "1.5"))
 SCAN_INTERVAL = 2.0  # seconds between signal evaluations
+# Max age of the traded side's ask before we refuse to enter. A side that never
+# received a real book tick (ask_ts==0, still at the 0.999 init default) or whose
+# ask is stale must not be traded — this is what let A buy against a fake 0.85/0.01
+# ask and take full losses. Matches the price-feed staleness gate (10s).
+ASK_MAX_STALENESS_S = float(os.getenv("ASK_MAX_STALENESS_S", "10"))
 
 
 async def signal_loop(
@@ -152,10 +157,27 @@ async def signal_loop(
         oracle.strategy_phase = "EDGE"
         if direction == "UP":
             ask = market.yes_ask
+            ask_ts = market.yes_ask_ts
             fair_direction = fair            # P(UP wins)
         else:
             ask = market.no_ask
+            ask_ts = market.no_ask_ts
             fair_direction = 1.0 - fair     # P(DOWN wins) = complement of P(UP)
+
+        # Per-side ask freshness gate. The shared last_book_update_ts is set when
+        # EITHER side ticks, so it cannot confirm the side we're about to BUY has a
+        # real, current ask. Require this side's own ask to have ticked recently —
+        # otherwise we'd be trading the 0.999 init default or a one-sided stale ask
+        # (the exact cause of the phantom-edge 0.85/0.01 fills that lost real money).
+        ask_age = (time.time() - ask_ts) if ask_ts > 0 else float("inf")
+        if ask_age > ASK_MAX_STALENESS_S:
+            log.info(
+                f"[A] T-{secs_left:.0f}s: {direction} ask stale/unset "
+                f"(age={ask_age if ask_age != float('inf') else -1:.0f}s, ask={ask:.3f}) "
+                f"for {market.market_id[:12]}… — skip (no real book on this side)"
+            )
+            continue
+
         tradeable, net_edge = should_trade(fair_direction, ask, MIN_EDGE_NET)
 
         if not tradeable:

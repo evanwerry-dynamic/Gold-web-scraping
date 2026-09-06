@@ -48,6 +48,7 @@ async def run() -> None:
     from polymarket.strategies.maker_loop import maker_loop
     from polymarket.strategies.arb_loop import arb_loop
     from polymarket.strategies.shadow import shadow_loop
+    from polymarket.strategies.carry_shadow import carry_shadow_loop
     from polymarket.execution.oms import oms_loop
     from polymarket.execution.redeem import redeem_loop
     from polymarket.sanity import sanity_loop
@@ -274,6 +275,10 @@ async def run() -> None:
         # lines the monitor job turns into a parallel backtest of A-variants / arb.
         _guard(lambda: shadow_loop(oracle),                        "shadow_loop"),
     ]
+    # Funding-carry shadow (Path A) — read-only Hyperliquid funding harvester sim,
+    # zero capital, no orders. Gated so it can be turned off without a code change.
+    if _flag("ENABLE_CARRY_SHADOW", True):
+        tasks.append(_guard(lambda: carry_shadow_loop(), "carry_shadow"))
     if enable_signal:
         tasks.append(_guard(lambda: signal_loop(oracle, order_queue, risk_mgr), "signal_loop"))
     if enable_maker:

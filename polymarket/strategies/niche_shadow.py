@@ -28,6 +28,7 @@ log = logging.getLogger(__name__)
 GAMMA_URL = "https://gamma-api.polymarket.com/markets"
 POLL_INTERVAL = 1800.0        # every 30 min
 FAV_MIN = 0.90                # "clear favourite" threshold (favourite-longshot probe)
+FAV_MAX = 0.985               # exclude already-decided (~1.0) markets — no edge, just noise
 THIN_LIQ_MAX = 20000.0        # only THIN markets (< $20k liquidity) — where edge lives
 MAX_TRACK = 400               # cap the pending set
 
@@ -114,7 +115,7 @@ async def niche_shadow_loop() -> None:
                     continue
                 fav = max(prices)
                 fav_idx = prices.index(fav)
-                if fav < FAV_MIN or liq <= 0 or liq > THIN_LIQ_MAX:
+                if fav < FAV_MIN or fav > FAV_MAX or liq <= 0 or liq > THIN_LIQ_MAX:
                     continue
                 _pending[cid] = (fav, fav_idx)
                 _seen.add(cid)

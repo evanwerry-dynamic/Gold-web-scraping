@@ -49,6 +49,7 @@ async def run() -> None:
     from polymarket.strategies.arb_loop import arb_loop
     from polymarket.strategies.shadow import shadow_loop
     from polymarket.strategies.carry_shadow import carry_shadow_loop
+    from polymarket.strategies.niche_shadow import niche_shadow_loop
     from polymarket.execution.oms import oms_loop
     from polymarket.execution.redeem import redeem_loop
     from polymarket.sanity import sanity_loop
@@ -279,6 +280,10 @@ async def run() -> None:
     # zero capital, no orders. Gated so it can be turned off without a code change.
     if _flag("ENABLE_CARRY_SHADOW", True):
         tasks.append(_guard(lambda: carry_shadow_loop(), "carry_shadow"))
+    # Niche prediction-market shadow scanner (Path B) — read-only favourite-longshot
+    # probe on non-crypto Polymarket markets; zero capital, no orders.
+    if _flag("ENABLE_NICHE_SHADOW", True):
+        tasks.append(_guard(lambda: niche_shadow_loop(), "niche_shadow"))
     if enable_signal:
         tasks.append(_guard(lambda: signal_loop(oracle, order_queue, risk_mgr), "signal_loop"))
     if enable_maker:

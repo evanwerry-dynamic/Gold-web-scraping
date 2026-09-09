@@ -70,32 +70,55 @@ def _fetch(params) -> list:
     return data if isinstance(data, list) else data.get("data", []) or []
 
 
+def _chunked(seq, n):
+    seq = list(seq)
+    for i in range(0, len(seq), n):
+        yield seq[i:i + n]
+
+
 async def niche_shadow_loop() -> None:
     log.info("Niche prediction-market shadow scanner starting (read-only, zero capital)...")
     loop = asyncio.get_running_loop()
     while True:
         try:
             # 1) Resolve pending candidates that have since closed.
+            #
+            # Originally this scanned the 200 globally most-recently-closed
+            # markets (order=endDate) and matched by conditionId. That silently
+            # failed for thin/niche markets: Polymarket resolves a high volume
+            # of markets across all categories continuously, so a 200-row
+            # window sorted by end date can easily never surface a specific
+            # thin market's resolution before it scrolls out of that window.
+            # Confirmed empirically: 0 [NICHE-RESULT] lines after 25h+ and 70+
+            # pending candidates, several of them same-day soccer "Exact
+            # Score" markets that should have resolved within hours. Fixed by
+            # querying Gamma directly for the pending condition_ids instead of
+            # scanning a global recency-ordered list — this can't miss a
+            # resolution regardless of how much unrelated market volume
+            # resolves elsewhere in the same window.
             if _pending:
-                closed = await loop.run_in_executor(
-                    None, lambda: _fetch({"closed": "true", "limit": 200,
-                                          "order": "endDate", "ascending": "false"}))
-                for m in closed:
-                    cid = str(m.get("conditionId") or m.get("condition_id") or "")
-                    if cid not in _pending:
-                        continue
-                    prices = _outcome_prices(m)
-                    if not prices:
-                        continue
-                    fav_price, fav_idx = _pending.pop(cid)
-                    # A resolved market has its winning outcome at ~1.0. The favourite
-                    # won iff the outcome we flagged as favourite is the one that resolved.
-                    fav_won = 1 if (fav_idx < len(prices) and prices[fav_idx] >= 0.99) else 0
-                    log.info(
-                        f"[NICHE-RESULT] cond={cid[:16]}… fav_obs={fav_price:.3f} "
-                        f"fav_won={fav_won} resolved={[round(p,2) for p in prices]} "
-                        f"q={str(m.get('question'))[:60]!r}"
-                    )
+                cids = list(_pending.keys())
+                for batch in _chunked(cids, 20):
+                    params = [("condition_ids", c) for c in batch]
+                    matched = await loop.run_in_executor(None, lambda p=params: _fetch(p))
+                    for m in matched:
+                        if not m.get("closed"):
+                            continue
+                        cid = str(m.get("conditionId") or m.get("condition_id") or "")
+                        if cid not in _pending:
+                            continue
+                        prices = _outcome_prices(m)
+                        if not prices:
+                            continue
+                        fav_price, fav_idx = _pending.pop(cid)
+                        # A resolved market has its winning outcome at ~1.0. The favourite
+                        # won iff the outcome we flagged as favourite is the one that resolved.
+                        fav_won = 1 if (fav_idx < len(prices) and prices[fav_idx] >= 0.99) else 0
+                        log.info(
+                            f"[NICHE-RESULT] cond={cid[:16]}… fav_obs={fav_price:.3f} "
+                            f"fav_won={fav_won} resolved={[round(p,2) for p in prices]} "
+                            f"q={str(m.get('question'))[:60]!r}"
+                        )
 
             # 2) Scan fresh thin/extreme candidates.
             active = await loop.run_in_executor(
